@@ -66,9 +66,9 @@ make build
 
 
 # Build images for ghcr
-make build-ghcr VERSION=v0.0.1
+make build-ghcr VERSION=v0.0.2
 # Need docker login first, please use GitHub Personal Access Token(PAT)
-docker push ghcr.io/signstack/fabric-x-tool:v0.0.1
+docker push ghcr.io/signstack/fabric-x-tool:v0.0.2
 docker push ghcr.io/signstack/fabric-x-tool:latest
 ```
 

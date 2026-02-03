@@ -1,5 +1,5 @@
 # ---------- build fabric-ca -------------
-FROM golang:1.25.2 AS builder
+FROM golang:1.25.6 AS builder
 WORKDIR /build
 
 # clone fabric-ca repo
@@ -20,6 +20,7 @@ RUN go install \
     github.com/hyperledger/fabric-x/tools/configtxgen@v0.0.8 \
     github.com/hyperledger/fabric-x/tools/configtxlator@v0.0.8 \
     github.com/hyperledger/fabric-x/tools/cryptogen@v0.0.8
+RUN go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.21
 
 # build fxconfig
 WORKDIR /build/fxconfig
@@ -51,6 +52,7 @@ COPY --from=builder /build/fabric-ca/bin/fabric-ca-client \
     /go/bin/configtxgen \
     /go/bin/configtxlator \
     /go/bin/cryptogen \
+    /go/bin/armageddon \
     /app/
 
 # copy configuration template
