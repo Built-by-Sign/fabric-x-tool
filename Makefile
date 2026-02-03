@@ -7,6 +7,10 @@ TAG?=local
 build:
 	$(CONTAINER_CLI) build --platform=$(PLATFORM) -f ./Dockerfile -t ghcr.io/signstack/fabric-x-tool:$(TAG) .
 
+.PHONY: build-ghcr
+build-ghcr:
+	./scripts/build-ghcr.sh $(VERSION)
+
 # show help
 help:
 	@echo ''

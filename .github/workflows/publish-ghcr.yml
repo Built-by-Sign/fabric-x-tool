@@ -1,9 +1,10 @@
 name: Publish to GHCR
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # disable auto execution, it's so slow in workflow
+  # push:
+  #   tags:
+  #     - 'v*'
   workflow_dispatch:
 
 env:
