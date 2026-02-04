@@ -65,3 +65,6 @@ COPY --from=builder /build/fabric-ca/bin/fabric-ca-client \
 
 # copy configuration template
 COPY ./fabric-ca-client-config.yaml.tpl /app/
+
+
+ENV PATH="/app:${PATH}"
