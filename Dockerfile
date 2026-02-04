@@ -7,6 +7,8 @@ RUN git clone --branch v1.5.16 --depth=1 --single-branch https://github.com/hype
 
 # copy local fxconfig tool
 COPY ./tools/fxconfig/ ./fxconfig
+# copy local config-builder tool
+COPY ./tools/config-builder/ ./config-builder
 
 # build fabric-ca with parallel compilation
 RUN cd fabric-ca && \
@@ -26,6 +28,11 @@ RUN go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.21
 WORKDIR /build/fxconfig
 RUN go mod download
 RUN go build -ldflags="-s -w" -trimpath -o fxconfig .
+
+# build config-builder
+WORKDIR /build/config-builder
+RUN go mod download
+RUN go build -ldflags="-s -w" -trimpath -o config-builder .
 
 # --------- Minimal runtime image --------------
 FROM debian:12-slim
@@ -48,6 +55,7 @@ WORKDIR /app
 COPY --from=builder /build/fabric-ca/bin/fabric-ca-client \
     /build/fabric-ca/bin/fabric-ca-server \
     /build/fxconfig/fxconfig \
+    /build/config-builder/config-builder \
     /go/bin/tokengen \
     /go/bin/configtxgen \
     /go/bin/configtxlator \
