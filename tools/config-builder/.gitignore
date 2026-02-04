@@ -1,0 +1,25 @@
+# Build output
+/build/
+/fxnet
+
+# Test coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dependency directories
+/vendor/
+
+# Config files (keep example)
+network.yaml
+!configs/network.yaml.example
+
