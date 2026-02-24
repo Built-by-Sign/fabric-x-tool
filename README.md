@@ -19,7 +19,7 @@ The Docker image is automatically built and published to GitHub Container Regist
 ### Pull the image
 
 ```bash
-docker pull ghcr.io/Built-by-Sign/fabric-x-tool:latest
+docker pull ghcr.io/built-by-sign/fabric-x-tool:latest
 ```
 
 ### Available tags
@@ -65,10 +65,10 @@ Note: Manual builds will use the branch name as the tag (not a version number), 
 make build
 
 # Build images for ghcr
-make build-ghcr VERSION=v0.0.3
+make build-ghcr VERSION=v0.0.4
 # Need docker login first, please use GitHub Personal Access Token(PAT)
-docker push ghcr.io/Built-by-Sign/fabric-x-tool:v0.0.3
-docker push ghcr.io/Built-by-Sign/fabric-x-tool:latest
+docker push ghcr.io/built-by-sign/fabric-x-tool:v0.0.4
+docker push ghcr.io/built-by-sign/fabric-x-tool:latest
 ```
 
 ## CI/CD

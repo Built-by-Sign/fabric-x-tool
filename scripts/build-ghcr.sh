@@ -3,7 +3,7 @@ set -e
 
 # Configuration
 REGISTRY="ghcr.io"
-IMAGE_NAME="Built-by-Sign/fabric-x-tool"
+IMAGE_NAME="built-by-sign/fabric-x-tool"
 VERSION="${1:-latest}"
 
 echo "🚀 Building and pushing ${REGISTRY}/${IMAGE_NAME}:${VERSION}"

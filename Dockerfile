@@ -37,15 +37,13 @@ RUN go build -ldflags="-s -w" -trimpath -o config-builder .
 # --------- Minimal runtime image --------------
 FROM debian:12-slim
 
-# Install runtime dependencies
+# Install ONLY runtime dependencies (removed all -dev packages)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     gettext-base \
-    libgrpc-dev \
-    libgrpc++-dev \
-    libprotobuf-dev \
-    libprotobuf-c-dev && \
+    libgrpc++1.51 \
+    libprotobuf32 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -65,6 +63,5 @@ COPY --from=builder /build/fabric-ca/bin/fabric-ca-client \
 
 # copy configuration template
 COPY ./fabric-ca-client-config.yaml.tpl /app/
-
 
 ENV PATH="/app:${PATH}"
