@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configured automated Docker image publishing on version tags
 - Added Dockerfile with multi-stage build process
 
-[Unreleased]: https://github.com/signstack/fabric-x-tool/compare/v0.0.3...HEAD
-[0.0.3]: https://github.com/signstack/fabric-x-tool/compare/v0.0.2...v0.0.3
-[0.0.2]: https://github.com/signstack/fabric-x-tool/compare/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/signstack/fabric-x-tool/releases/tag/v0.0.1
+[Unreleased]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.2...v0.0.3
+[0.0.2]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.1...v0.0.2
+[0.0.1]: https://github.com/Built-by-Sign/fabric-x-tool/releases/tag/v0.0.1

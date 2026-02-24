@@ -5,7 +5,7 @@ TAG?=local
 
 .PHONY: build
 build:
-	$(CONTAINER_CLI) build --platform=$(PLATFORM) -f ./Dockerfile -t ghcr.io/signstack/fabric-x-tool:$(TAG) .
+	$(CONTAINER_CLI) build --platform=$(PLATFORM) -f ./Dockerfile -t ghcr.io/Built-by-Sign/fabric-x-tool:$(TAG) .
 
 .PHONY: build-ghcr
 build-ghcr:
