@@ -65,9 +65,9 @@ Note: Manual builds will use the branch name as the tag (not a version number), 
 make build
 
 # Build images for ghcr
-make build-ghcr VERSION=v0.0.4
+make build-ghcr VERSION=v0.0.5
 # Need docker login first, please use GitHub Personal Access Token(PAT)
-docker push ghcr.io/built-by-sign/fabric-x-tool:v0.0.4
+docker push ghcr.io/built-by-sign/fabric-x-tool:v0.0.5
 docker push ghcr.io/built-by-sign/fabric-x-tool:latest
 ```
 
