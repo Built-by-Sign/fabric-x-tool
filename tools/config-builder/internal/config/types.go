@@ -124,8 +124,8 @@ func DefaultConfig() *NetworkConfig {
 		ChannelID:  "arma",
 		CliVersion: "latest",
 		Docker: DockerConfig{
-			Name:          "cbdc",
-			Network:       "cbdc_net",
+			Name:          "fx-network",
+			Network:       "fx-network_net",
 			NetworkDriver: "bridge",
 			OrdererImage:  "hyperledger/fabric-x-orderer:local",
 			ToolsImage:    "docker.io/hyperledger/fabric-x-tools:0.0.4", // Match Ansible default

@@ -1,4 +1,4 @@
-module github.com/hyperledger/fabric-x/tools/fxconfig
+module fxconfig
 
 go 1.24.3
 

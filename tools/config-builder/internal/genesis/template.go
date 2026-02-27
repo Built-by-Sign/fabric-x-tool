@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
 )
 
 // configtxTemplate is the template for generating configtx.yaml

@@ -1,7 +1,7 @@
 package crypto
 
 import (
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
 )
 
 // CryptoGenerator is the interface for generating crypto materials

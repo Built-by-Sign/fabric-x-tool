@@ -5,11 +5,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/armageddon"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/crypto"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/genesis"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/template"
+	"config-builder/internal/armageddon"
+	"config-builder/internal/config"
+	"config-builder/internal/crypto"
+	"config-builder/internal/genesis"
+	"config-builder/internal/template"
 )
 
 // Options contains setup command options

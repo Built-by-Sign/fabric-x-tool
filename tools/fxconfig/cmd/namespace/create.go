@@ -9,7 +9,8 @@ package namespace
 import (
 	"errors"
 
-	"github.com/hyperledger/fabric-x/tools/fxconfig/internal/namespace"
+	"fxconfig/internal/namespace"
+
 	"github.com/spf13/cobra"
 )
 

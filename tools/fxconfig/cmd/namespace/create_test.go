@@ -9,7 +9,8 @@ package namespace
 import (
 	"testing"
 
-	"github.com/hyperledger/fabric-x/tools/fxconfig/internal/namespace"
+	"fxconfig/internal/namespace"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )

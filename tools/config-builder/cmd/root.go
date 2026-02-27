@@ -3,10 +3,12 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/compose"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/crypto"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/setup"
+	"config-builder/internal/config"
+	"config-builder/internal/crypto"
+	"config-builder/internal/setup"
+
+	"config-builder/internal/compose"
+
 	"github.com/spf13/cobra"
 )
 

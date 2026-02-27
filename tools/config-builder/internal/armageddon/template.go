@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
 )
 
 // getDefaultHost returns the default host based on the operating system

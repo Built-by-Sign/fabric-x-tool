@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/bccsp"
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/bccsp"
+	"config-builder/internal/config"
 )
 
 // Engine handles template-based configuration file generation

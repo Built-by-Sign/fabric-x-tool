@@ -43,7 +43,7 @@ func Load(path string) (*NetworkConfig, error) {
 	// If project_dir is empty or ".", auto-detect from config file location
 	// If project_dir is a relative path, resolve it first, then validate
 	if config.ProjectDir == "" || config.ProjectDir == "." {
-		// Auto-detect: find cbdc-network root directory
+		// Auto-detect: find network root directory
 		detectedDir, err := detectProjectDir(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to detect project directory: %w", err)
@@ -86,18 +86,18 @@ func Save(config *NetworkConfig, path string) error {
 }
 
 // detectProjectDir automatically detects the project directory by looking for
-// the cbdc-network root directory (contains tools/ directory)
+// the network root directory (contains tools/ directory)
 func detectProjectDir(configPath string) (string, error) {
 	configDir, err := filepath.Abs(filepath.Dir(configPath))
 	if err != nil {
 		return "", fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	// Start from config file directory and walk up to find cbdc-network root
+	// Start from config file directory and walk up to find network root
 	// The root directory should contain a "tools" directory
 	currentDir := configDir
 	for {
-		// Check if this directory contains "tools" directory (indicating cbdc-network root)
+		// Check if this directory contains "tools" directory (indicating network root)
 		toolsDir := filepath.Join(currentDir, "tools")
 		if info, err := os.Stat(toolsDir); err == nil && info.IsDir() {
 			return currentDir, nil

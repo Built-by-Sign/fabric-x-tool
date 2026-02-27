@@ -73,8 +73,8 @@ tls:
 
 # Docker Configuration
 docker:
-  name: cbdc
-  network: cbdc_net
+  name: fx-network
+  network: fx-network_net
   network_driver: bridge
   orderer_image: hyperledger/fabric-x-orderer:local
   committer_image: hyperledger/fabric-x-committer:local
@@ -121,7 +121,7 @@ committer:
       host: db
       postgres_user: postgres
       postgres_password: password
-      postgres_db: cbdc
+      postgres_db: fxdb
     - name: validator
       type: validator
       port: 8080
@@ -335,7 +335,7 @@ committer:
       host: db
       postgres_user: postgres         # For db type
       postgres_password: password     # For db type
-      postgres_db: cbdc               # For db type
+      postgres_db: fxdb               # For db type
     - name: validator
       type: validator
       port: 8080
@@ -346,8 +346,8 @@ committer:
 
 ```yaml
 docker:
-  name: cbdc
-  network: cbdc_net
+  name: fx-network
+  network: fx-network_net
   network_driver: bridge
   network_external: false
   orderer_image: hyperledger/fabric-x-orderer:local

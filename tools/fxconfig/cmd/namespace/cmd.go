@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package namespace
 
 import (
-	"github.com/hyperledger/fabric-x/tools/fxconfig/internal/namespace"
+	"fxconfig/internal/namespace"
+
 	"github.com/spf13/cobra"
 )
 

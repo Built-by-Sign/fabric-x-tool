@@ -1,4 +1,4 @@
-module github.com/ethsign/cbdc-chain/cbdc-network/config-builder
+module config-builder
 
 go 1.24.0
 

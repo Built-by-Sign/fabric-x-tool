@@ -9,7 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
+
 	"golang.org/x/term"
 )
 
@@ -21,7 +22,7 @@ type FabricCAGenerator struct {
 	showProgress   bool
 	currentStep    int
 	totalSteps     int
-	toolsImage     string     // Docker image containing fabric-ca-client and cbdc-tool
+	toolsImage     string     // Docker image containing fabric-ca-client and fabric-x-tool
 	isTTY          bool       // Whether stdout is a TTY (for progress bar)
 	progressMutex  sync.Mutex // Protects progress bar updates
 	maxConcurrency int        // Maximum concurrent certificate generations
@@ -208,7 +209,7 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 }
 
 // GenerateOrgCrypto generates crypto materials for an organization using fabric-ca-client
-// This method uses docker run to execute cbdc-tool image with fabric-ca-client
+// This method uses docker run to execute fabric-x-tool image with fabric-ca-client
 // orgType should be "orderer" or "peer"
 func (g *FabricCAGenerator) GenerateOrgCrypto(orgName, domain, caURL, tokenLabel string, nodes []NodeInfo, orgType string) error {
 	absOutputDir, err := filepath.Abs(g.outputDir)
@@ -380,7 +381,6 @@ func (g *FabricCAGenerator) generateNodeCrypto(orgName, domain, caURL, tokenLabe
 }
 
 // GenerateNodeTLS generates TLS certificates for a node using fabric-ca-client
-// Reference: cbdc-biz/scripts/gen_crypto.sh:74
 // This uses software mode (no KMS) with --enrollment.profile tls
 // Command: fabric-ca-client enroll -u "URL" -m "node.domain" --enrollment.profile tls -M "dir/node"
 func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo, cryptoDir string, orgType string) error {
@@ -1307,7 +1307,7 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollLocal(outputDir, caURL, token
 	configPath := filepath.Join(tempDir, "fabric-ca-client-config.yaml")
 
 	// Use envsubst to generate config from template (same as Docker version)
-	// The template file is located at /app/fabric-ca-client-config.yaml.tpl in cbdc-tool container
+	// The template file is located at /app/fabric-ca-client-config.yaml.tpl in fabric-x-tool container
 	templatePath := "/app/fabric-ca-client-config.yaml.tpl"
 	envsubstCmd := exec.Command("sh", "-c",
 		fmt.Sprintf("envsubst < %s > %s", templatePath, configPath))
