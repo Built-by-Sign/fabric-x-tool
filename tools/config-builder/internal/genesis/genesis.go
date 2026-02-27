@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
 )
 
 // Generator handles genesis block generation
@@ -218,7 +218,7 @@ func (g *Generator) runConfigtxgenLocal(configPath, absOutputDir, genesisBlockPa
 func (g *Generator) runConfigtxgenDocker(configPath, absOutputDir, genesisBlockPath string) error {
 	image := g.config.Docker.ToolsImage
 	if image == "" {
-		image = "cbdc-dev.sign.global:5001/cbdc-tool:latest" // Default from .env
+		panic("No fabric-x-tool image found")
 	}
 
 	// Docker paths (matching Ansible's configtxgen_docker_output_dir)

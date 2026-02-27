@@ -6,7 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
+
 	"gopkg.in/yaml.v3"
 )
 

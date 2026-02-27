@@ -9,7 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -223,7 +224,7 @@ func getCurrentUserUIDGID() string {
 }
 
 // normalizePathForDockerCompose converts paths to be suitable for docker-compose volume mounts.
-// When running inside a container (e.g., cbdc-tool), paths like /workspace/out/... need to be
+// When running inside a container, paths like /workspace/out/... need to be
 // converted to relative paths ./local-deployment/... so they work correctly when docker-compose runs on the host.
 // When running on the host, absolute paths need to be converted to relative paths based on the
 // docker-compose.yaml location (which is in the out/ directory).

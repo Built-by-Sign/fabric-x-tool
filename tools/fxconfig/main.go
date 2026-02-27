@@ -7,7 +7,7 @@ package main
 import (
 	"os"
 
-	"github.com/hyperledger/fabric-x/tools/fxconfig/cmd"
+	"fxconfig/cmd"
 )
 
 func main() {

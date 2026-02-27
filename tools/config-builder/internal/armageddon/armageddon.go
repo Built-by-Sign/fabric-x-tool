@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/config"
+	"config-builder/internal/config"
+
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

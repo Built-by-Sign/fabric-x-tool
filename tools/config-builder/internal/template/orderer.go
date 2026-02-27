@@ -8,7 +8,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/ethsign/cbdc-chain/cbdc-network/config-builder/internal/bccsp"
+	"config-builder/internal/bccsp"
 )
 
 // OrdererTemplateData holds data for orderer node configuration templates

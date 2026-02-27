@@ -9,7 +9,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/hyperledger/fabric-x/tools/fxconfig/cmd/namespace"
+	"fxconfig/cmd/namespace"
 )
 
 // Execute is the entry point of fxconfig and collects all commands.
