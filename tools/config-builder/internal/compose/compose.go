@@ -394,7 +394,7 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		// Database component (PostgreSQL)
 		// Ansible mounts: {{ postgres_pgdata_dir }}:/var/lib/postgresql/data:Z
 		// Ansible sets: PGDATA: /var/lib/postgresql/data/pgdata
-		service.Image = "postgres:15"
+		service.Image = g.config.Docker.PostgresImage
 		service.Environment = append(service.Environment,
 			fmt.Sprintf("POSTGRES_USER=%s", component.PostgresUser),
 			fmt.Sprintf("POSTGRES_PASSWORD=%s", component.PostgresPassword),

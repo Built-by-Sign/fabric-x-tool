@@ -114,6 +114,8 @@ type DockerConfig struct {
 	// When true, cryptogen, configtxgen, and fabric-ca-client will be executed directly
 	// Requires these tools to be installed and available in PATH
 	UseLocalTools bool `yaml:"use_local_tools"`
+
+	PostgresImage string `yaml:"postgres_image"`
 }
 
 // DefaultConfig returns a default network configuration
