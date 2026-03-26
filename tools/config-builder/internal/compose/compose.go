@@ -325,6 +325,15 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", orderer.Port, orderer.Port))
 	}
 
+	// Add monitoring port mapping
+	monPort := orderer.MonitoringPort
+	if monPort == 0 && orderer.Port > 0 {
+		monPort = orderer.Port + 10
+	}
+	if monPort > 0 {
+		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", monPort, monPort))
+	}
+
 	// Set command based on orderer type
 	// Ansible uses different commands for different types:
 	// - router: "router --config=..."
@@ -481,6 +490,17 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", component.Port, component.Port))
 	}
 
+	// Add monitoring port mapping for non-db components
+	if component.Type != "db" {
+		monPort := component.MonitoringPort
+		if monPort == 0 {
+			monPort = defaultCommitterMonitoringPort(component.Type)
+		}
+		if monPort > 0 {
+			service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", monPort, monPort))
+		}
+	}
+
 	// Add dependencies with conditions
 	// Find DB name for dependency
 	var dbName string
@@ -528,6 +548,24 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 	}
 
 	return service
+}
+
+// defaultCommitterMonitoringPort returns the default monitoring port for a committer component type
+func defaultCommitterMonitoringPort(componentType string) int {
+	switch componentType {
+	case "validator":
+		return 2120
+	case "verifier":
+		return 2130
+	case "coordinator":
+		return 2140
+	case "sidecar":
+		return 2150
+	case "query-service":
+		return 2160
+	default:
+		return 0
+	}
 }
 
 // log prints a message if verbose mode is enabled

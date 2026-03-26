@@ -18,6 +18,7 @@ type CommitterTemplateData struct {
 	ConfigDir          string
 	Host               string
 	Port               int
+	MonitoringPort     int
 	Database           *DatabaseConfig
 	ChannelID          string
 	CommitterHost      string
@@ -130,7 +131,7 @@ database:
 {{ end }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2120
+    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2120{{ end }}
 logging:
   enabled: true
   development: false
@@ -156,7 +157,7 @@ parallel-executor:
   parallelism: 80
 monitoring:
   server:
-    endpoint: 0.0.0.0:2130
+    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2130{{ end }}
 logging:
   enabled: true
   development: false
@@ -192,7 +193,7 @@ dependency-graph:
 per-channel-buffer-size-per-goroutine: 10
 monitoring:
   server:
-    endpoint: 0.0.0.0:2140
+    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2140{{ end }}
 logging:
   enabled: true
   development: false
@@ -237,7 +238,7 @@ bootstrap:
   genesis-block-file-path: {{ .GenesisBlockPath }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2150
+    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2150{{ end }}
 logging:
   enabled: true
   development: false
@@ -326,7 +327,7 @@ database:
 {{ end }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2160
+    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2160{{ end }}
 logging:
   enabled: true
   development: false

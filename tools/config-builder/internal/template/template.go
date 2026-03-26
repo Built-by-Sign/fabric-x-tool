@@ -231,18 +231,26 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		bccsConfig = bccsp.GenerateSoftwareConfig()
 	}
 
+	// Auto-calculate monitoring port if not specified
+	monPort := node.MonitoringPort
+	if monPort == 0 && node.Port > 0 {
+		monPort = node.Port + 10
+	}
+
 	data := &OrdererTemplateData{
-		PartyID:       partyID, // Use provided partyID (each org has different PartyID)
-		OrdererType:   ordererType,
-		ShardID:       node.ShardID,
-		ConfigDir:     containerConfigDir, // Container path, not host path
-		CryptoDir:     cryptoDir,
-		GenesisDir:    genesisDir,
-		ListenAddress: "0.0.0.0",
-		ListenPort:    node.Port,
-		MSPID:         org.Name,
-		ChannelID:     e.config.ChannelID,
-		BCCSP:         bccsConfig, // Use generated BCCSP config
+		PartyID:                 partyID, // Use provided partyID (each org has different PartyID)
+		OrdererType:             ordererType,
+		ShardID:                 node.ShardID,
+		ConfigDir:               containerConfigDir, // Container path, not host path
+		CryptoDir:               cryptoDir,
+		GenesisDir:              genesisDir,
+		ListenAddress:           "0.0.0.0",
+		ListenPort:              node.Port,
+		MonitoringListenAddress: "0.0.0.0",
+		MonitoringListenPort:    monPort,
+		MSPID:                   org.Name,
+		ChannelID:               e.config.ChannelID,
+		BCCSP:                   bccsConfig, // Use generated BCCSP config
 		TLS: TLSConfig{
 			Enabled:            e.getTLSEnabled(),            // Use config value or default to false
 			ClientAuthRequired: e.getTLSClientAuthRequired(), // Use config value or default to false
@@ -270,6 +278,7 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		ConfigDir:        containerConfigDir, // Container path, not host path
 		Host:             component.Host,
 		Port:             component.Port,
+		MonitoringPort:   component.MonitoringPort,
 		ChannelID:        e.config.ChannelID,
 		GenesisBlockPath: filepath.Join(containerConfigDir, "genesis.block"), // Container path
 	}
