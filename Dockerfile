@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ---------- build fabric-ca -------------
 FROM golang:1.25.6 AS builder
 WORKDIR /build
@@ -5,34 +6,44 @@ WORKDIR /build
 # clone fabric-ca repo
 RUN git clone --branch v1.5.16 --depth=1 --single-branch https://github.com/hyperledger/fabric-ca.git
 
-# copy local fxconfig tool
-COPY ./tools/fxconfig/ ./fxconfig
-# copy local config-builder tool
-COPY ./tools/config-builder/ ./config-builder
-
 # build fabric-ca with parallel compilation
-RUN cd fabric-ca && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    cd fabric-ca && \
     make fabric-ca-client GO_TAGS=pkcs11 -j$(nproc) && \
     make fabric-ca-server GO_TAGS=pkcs11 -j$(nproc)
 
-# build tokengen
-RUN go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.8.0
-# build configtxgen configtxlator cryptogen
-RUN go install \
+# build remote dependencies (these rarely change)
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.8.0
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install \
     github.com/hyperledger/fabric-x/tools/configtxgen@v0.0.8 \
     github.com/hyperledger/fabric-x/tools/configtxlator@v0.0.8 \
     github.com/hyperledger/fabric-x/tools/cryptogen@v0.0.8
-RUN go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.21
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.21
+
+# copy local source AFTER remote builds so source changes don't invalidate above layers
+COPY ./tools/fxconfig/ ./fxconfig
+COPY ./tools/config-builder/ ./config-builder
 
 # build fxconfig
 WORKDIR /build/fxconfig
-RUN go mod download
-RUN go build -ldflags="-s -w" -trimpath -o fxconfig .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download && \
+    go build -ldflags="-s -w" -trimpath -o fxconfig .
 
 # build config-builder
 WORKDIR /build/config-builder
-RUN go mod download
-RUN go build -ldflags="-s -w" -trimpath -o config-builder .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download && \
+    go build -ldflags="-s -w" -trimpath -o config-builder .
 
 # --------- Minimal runtime image --------------
 FROM debian:12-slim

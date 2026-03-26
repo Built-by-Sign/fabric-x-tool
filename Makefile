@@ -1,11 +1,11 @@
 CONTAINER_CLI?=docker
-# PLATFORM?=linux/amd64,linux/arm64
-PLATFORM?=linux/arm64
+PLATFORM?=linux/amd64,linux/arm64
+#PLATFORM?=linux/arm64
 TAG?=local
 
 .PHONY: build
 build:
-	$(CONTAINER_CLI) build --platform=$(PLATFORM) -f ./Dockerfile -t ghcr.io/built-by-sign/fabric-x-tool:$(TAG) .
+	$(CONTAINER_CLI) buildx build --platform=$(PLATFORM) -f ./Dockerfile -t ghcr.io/built-by-sign/fabric-x-tool:$(TAG) .
 
 .PHONY: build-ghcr
 build-ghcr:
