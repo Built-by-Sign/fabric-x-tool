@@ -131,7 +131,7 @@ database:
 {{ end }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2120{{ end }}
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
 logging:
   enabled: true
   development: false
@@ -157,7 +157,7 @@ parallel-executor:
   parallelism: 80
 monitoring:
   server:
-    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2130{{ end }}
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
 logging:
   enabled: true
   development: false
@@ -193,7 +193,7 @@ dependency-graph:
 per-channel-buffer-size-per-goroutine: 10
 monitoring:
   server:
-    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2140{{ end }}
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
 logging:
   enabled: true
   development: false
@@ -238,7 +238,7 @@ bootstrap:
   genesis-block-file-path: {{ .GenesisBlockPath }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2150{{ end }}
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
 logging:
   enabled: true
   development: false
@@ -327,7 +327,7 @@ database:
 {{ end }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:{{ if .MonitoringPort }}{{ .MonitoringPort }}{{ else }}2160{{ end }}
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
 logging:
   enabled: true
   development: false

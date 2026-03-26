@@ -233,8 +233,8 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 
 	// Auto-calculate monitoring port if not specified
 	monPort := node.MonitoringPort
-	if monPort == 0 && node.Port > 0 {
-		monPort = node.Port + 10
+	if monPort == 0 {
+		monPort = config.DefaultMonitoringPort(node.Port)
 	}
 
 	data := &OrdererTemplateData{
@@ -263,6 +263,15 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 	return data
 }
 
+// monitoringPort returns the monitoring port for a committer component,
+// falling back to service port + 10.
+func monitoringPort(c *config.CommitterNode) int {
+	if c.MonitoringPort != 0 {
+		return c.MonitoringPort
+	}
+	return config.DefaultMonitoringPort(c.Port)
+}
+
 // buildCommitterTemplateData builds template data for committer components
 func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) *CommitterTemplateData {
 	// Use container path for configDir (matches Ansible's committer_docker_config_dir = "/config")
@@ -278,7 +287,7 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		ConfigDir:        containerConfigDir, // Container path, not host path
 		Host:             component.Host,
 		Port:             component.Port,
-		MonitoringPort:   component.MonitoringPort,
+		MonitoringPort:   monitoringPort(component),
 		ChannelID:        e.config.ChannelID,
 		GenesisBlockPath: filepath.Join(containerConfigDir, "genesis.block"), // Container path
 	}

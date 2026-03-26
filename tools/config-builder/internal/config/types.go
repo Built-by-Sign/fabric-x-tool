@@ -120,6 +120,14 @@ type DockerConfig struct {
 	PostgresImage string `yaml:"postgres_image"`
 }
 
+// DefaultMonitoringPort returns the default monitoring port: service port + 10.
+func DefaultMonitoringPort(servicePort int) int {
+	if servicePort > 0 {
+		return servicePort + 10
+	}
+	return 0
+}
+
 // DefaultConfig returns a default network configuration
 func DefaultConfig() *NetworkConfig {
 	return &NetworkConfig{
