@@ -6,11 +6,6 @@ WORKDIR /build
 # clone fabric-ca repo
 RUN git clone --branch v1.5.16 --depth=1 --single-branch https://github.com/hyperledger/fabric-ca.git
 
-# copy local fxconfig tool
-COPY ./tools/fxconfig/ ./fxconfig
-# copy local config-builder tool
-COPY ./tools/config-builder/ ./config-builder
-
 # build fabric-ca with parallel compilation
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -18,11 +13,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     make fabric-ca-client GO_TAGS=pkcs11 -j$(nproc) && \
     make fabric-ca-server GO_TAGS=pkcs11 -j$(nproc)
 
-# build tokengen
+# build remote dependencies (these rarely change)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.8.0
-# build configtxgen configtxlator cryptogen
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go install \
@@ -32,6 +26,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.21
+
+# copy local source AFTER remote builds so source changes don't invalidate above layers
+COPY ./tools/fxconfig/ ./fxconfig
+COPY ./tools/config-builder/ ./config-builder
 
 # build fxconfig
 WORKDIR /build/fxconfig
