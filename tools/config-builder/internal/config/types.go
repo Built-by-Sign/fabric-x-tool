@@ -62,12 +62,13 @@ type PeerOrg struct {
 
 // Node represents a network node (orderer or peer)
 type Node struct {
-	Name    string `yaml:"name"`
-	Type    string `yaml:"type"` // router, batcher, consenter, assembler (for orderer)
-	Port    int    `yaml:"port"`
-	ShardID int    `yaml:"shard_id,omitempty"`
-	Host    string `yaml:"host"`
-	UserPin string `yaml:"user_pin,omitempty"` // User PIN for KMS access (per-node)
+	Name           string `yaml:"name"`
+	Type           string `yaml:"type"` // router, batcher, consenter, assembler (for orderer)
+	Port           int    `yaml:"port"`
+	MonitoringPort int    `yaml:"monitoring_port,omitempty"`
+	ShardID        int    `yaml:"shard_id,omitempty"`
+	Host           string `yaml:"host"`
+	UserPin        string `yaml:"user_pin,omitempty"` // User PIN for KMS access (per-node)
 }
 
 // User represents a user identity
@@ -84,10 +85,11 @@ type CommitterConfig struct {
 
 // CommitterNode represents a committer component
 type CommitterNode struct {
-	Name string `yaml:"name"`
-	Type string `yaml:"type"` // db, validator, verifier, coordinator, sidecar, query-service
-	Port int    `yaml:"port"`
-	Host string `yaml:"host"`
+	Name           string `yaml:"name"`
+	Type           string `yaml:"type"` // db, validator, verifier, coordinator, sidecar, query-service
+	Port           int    `yaml:"port"`
+	MonitoringPort int    `yaml:"monitoring_port,omitempty"`
+	Host           string `yaml:"host"`
 
 	// Database specific
 	PostgresUser     string `yaml:"postgres_user,omitempty"`
@@ -116,6 +118,14 @@ type DockerConfig struct {
 	UseLocalTools bool `yaml:"use_local_tools"`
 
 	PostgresImage string `yaml:"postgres_image"`
+}
+
+// DefaultMonitoringPort returns the default monitoring port: service port + 10.
+func DefaultMonitoringPort(servicePort int) int {
+	if servicePort > 0 {
+		return servicePort + 10
+	}
+	return 0
 }
 
 // DefaultConfig returns a default network configuration

@@ -325,6 +325,15 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", orderer.Port, orderer.Port))
 	}
 
+	// Add monitoring port mapping
+	monPort := orderer.MonitoringPort
+	if monPort == 0 {
+		monPort = config.DefaultMonitoringPort(orderer.Port)
+	}
+	if monPort > 0 {
+		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", monPort, monPort))
+	}
+
 	// Set command based on orderer type
 	// Ansible uses different commands for different types:
 	// - router: "router --config=..."
@@ -479,6 +488,17 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 	// Add port mapping for non-db components (db port mapping is handled in the switch above)
 	if component.Type != "db" && component.Port > 0 {
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", component.Port, component.Port))
+	}
+
+	// Add monitoring port mapping for non-db components
+	if component.Type != "db" {
+		monPort := component.MonitoringPort
+		if monPort == 0 {
+			monPort = config.DefaultMonitoringPort(component.Port)
+		}
+		if monPort > 0 {
+			service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", monPort, monPort))
+		}
 	}
 
 	// Add dependencies with conditions

@@ -13,18 +13,20 @@ import (
 
 // OrdererTemplateData holds data for orderer node configuration templates
 type OrdererTemplateData struct {
-	PartyID       int
-	OrdererType   string
-	ShardID       int
-	ConfigDir     string
-	CryptoDir     string
-	GenesisDir    string
-	ListenAddress string
-	ListenPort    int
-	MSPID         string
-	ChannelID     string
-	BCCSP         *bccsp.BCCSPConfig // Use BCCSP config instead of HSM
-	TLS           TLSConfig
+	PartyID                 int
+	OrdererType             string
+	ShardID                 int
+	ConfigDir               string
+	CryptoDir               string
+	GenesisDir              string
+	ListenAddress           string
+	ListenPort              int
+	MonitoringListenAddress string
+	MonitoringListenPort    int
+	MSPID                   string
+	ChannelID               string
+	BCCSP                   *bccsp.BCCSPConfig // Use BCCSP config instead of HSM
+	TLS                     TLSConfig
 }
 
 // TLSConfig holds TLS configuration
@@ -210,6 +212,10 @@ General:
             Hash: {{ .BCCSP.SW.Hash }}
             Security: {{ .BCCSP.SW.Security }}
 {{- end }}
+{{- end }}
+{{- if .MonitoringListenPort }}
+    MonitoringListenAddress: {{ .MonitoringListenAddress }}
+    MonitoringListenPort: {{ .MonitoringListenPort }}
 {{- end }}
 {{ end }}
 `

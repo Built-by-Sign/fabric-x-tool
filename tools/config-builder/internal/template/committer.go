@@ -18,6 +18,7 @@ type CommitterTemplateData struct {
 	ConfigDir          string
 	Host               string
 	Port               int
+	MonitoringPort     int
 	Database           *DatabaseConfig
 	ChannelID          string
 	CommitterHost      string
@@ -128,9 +129,11 @@ database:
     # Format: string representing a duration (e.g., "15m", "1h").
     max-elapsed-time: 15m
 {{ end }}
+{{- if .MonitoringPort }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2120
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
+{{- end }}
 logging:
   enabled: true
   development: false
@@ -154,9 +157,11 @@ parallel-executor:
   batch-time-cutoff: 2ms
   channel-buffer-size: 1000
   parallelism: 80
+{{- if .MonitoringPort }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2130
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
+{{- end }}
 logging:
   enabled: true
   development: false
@@ -190,9 +195,11 @@ dependency-graph:
   waiting-txs-limit: 20000000
   num-of-workers-for-global-dep-manager: 1
 per-channel-buffer-size-per-goroutine: 10
+{{- if .MonitoringPort }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2140
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
+{{- end }}
 logging:
   enabled: true
   development: false
@@ -235,9 +242,11 @@ ledger:
 last-committed-block-set-interval: 5s
 bootstrap:
   genesis-block-file-path: {{ .GenesisBlockPath }}
+{{- if .MonitoringPort }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2150
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
+{{- end }}
 logging:
   enabled: true
   development: false
@@ -324,9 +333,11 @@ database:
     # Format: string representing a duration (e.g., "15m", "1h").
     max-elapsed-time: 15m
 {{ end }}
+{{- if .MonitoringPort }}
 monitoring:
   server:
-    endpoint: 0.0.0.0:2160
+    endpoint: 0.0.0.0:{{ .MonitoringPort }}
+{{- end }}
 logging:
   enabled: true
   development: false
