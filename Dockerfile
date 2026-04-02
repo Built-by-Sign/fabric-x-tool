@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # build remote dependencies (these rarely change)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.8.0
+    go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.8.1
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go install \
