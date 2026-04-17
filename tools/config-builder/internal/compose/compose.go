@@ -364,6 +364,15 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		committerImage = "hyperledger/fabric-x-committer:0.0.19"
 	}
 
+	// Sidecar (v0.1.9+) requires MSP signing identity to pass orderer Readers policy.
+	// When the MSP private key is managed by KMS (PKCS11 mode), the sidecar needs an
+	// image with libkms_pkcs11.so available. Other committer components (coordinator,
+	// verifier, validator, query-service) don't connect to orderer as signer so they
+	// keep using the vanilla committer image.
+	if component.Type == "sidecar" && g.config.Docker.CommitterKMSImage != "" {
+		committerImage = g.config.Docker.CommitterKMSImage
+	}
+
 	service := Service{
 		Image:         committerImage,
 		ContainerName: serviceName,
@@ -433,7 +442,6 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		}
 	case "validator":
 		service.Command = []string{
-			"committer",
 			"start-vc",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
@@ -441,28 +449,43 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		// It uses ansible.builtin.wait_for from the host to check ports instead
 	case "verifier":
 		service.Command = []string{
-			"committer",
 			"start-verifier",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
 		// Note: Ansible does not use Docker healthchecks for committer components
 	case "coordinator":
 		service.Command = []string{
-			"committer",
 			"start-coordinator",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
 		// Note: Ansible does not use Docker healthchecks for committer components
 	case "sidecar":
 		service.Command = []string{
-			"committer",
 			"start-sidecar",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
+		// v0.1.9+ sidecar requires orderer.identity (MSP signer) and bootstrap
+		// genesis block to pass orderer deliver authorization.
+		// Mount the first peer org's channel_admin MSP and the genesis block from
+		// host-side cryptogen/configtxgen artifacts.
+		if len(g.config.PeerOrgs) > 0 {
+			org := g.config.PeerOrgs[0]
+			mspHostPath := fmt.Sprintf("./build/config/cryptogen-artifacts/crypto/peerOrganizations/%s/users/channel_admin@%s/msp", org.Domain, org.Domain)
+			service.Volumes = append(service.Volumes,
+				fmt.Sprintf("%s:/msp/channel_admin:ro", mspHostPath),
+				"./build/config/configtxgen-artifacts/arma_block.pb:/config/genesis.block:ro",
+			)
+		}
+		// Inject PKCS11 label/pin via viper env override (SC_SIDECAR_<key> prefix).
+		// These map onto orderer.identity.bccsp.pkcs11.{label,pin} in config-sidecar.yml.
+		// Host-side values come from .env (KMS_TOKEN_LABEL, KMS_USER_PIN).
+		service.Environment = append(service.Environment,
+			"SC_SIDECAR_ORDERER_IDENTITY_BCCSP_PKCS11_LABEL=${KMS_TOKEN_LABEL}",
+			"SC_SIDECAR_ORDERER_IDENTITY_BCCSP_PKCS11_PIN=${KMS_USER_PIN}",
+		)
 		// Note: Ansible does not use Docker healthchecks for committer components
 	case "query-service":
 		service.Command = []string{
-			"committer",
 			"start-query",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}

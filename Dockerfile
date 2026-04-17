@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ---------- build fabric-ca -------------
-FROM golang:1.25.6 AS builder
+FROM golang:1.25.7 AS builder
 WORKDIR /build
 
 # clone fabric-ca repo
@@ -16,16 +16,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # build remote dependencies (these rarely change)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.8.1
+    go install -tags "pkcs11" github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen@v0.10.0
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go install \
-    github.com/hyperledger/fabric-x/tools/configtxgen@v0.0.8 \
-    github.com/hyperledger/fabric-x/tools/configtxlator@v0.0.8 \
-    github.com/hyperledger/fabric-x/tools/cryptogen@v0.0.8
+    github.com/hyperledger/fabric-x/tools/configtxgen@v0.0.12 \
+    github.com/hyperledger/fabric-x/tools/configtxlator@v0.0.12 \
+    github.com/hyperledger/fabric-x/tools/cryptogen@v0.0.12
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.21
+    go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.24
 
 # copy local source AFTER remote builds so source changes don't invalidate above layers
 COPY ./tools/fxconfig/ ./fxconfig
@@ -75,4 +75,9 @@ COPY --from=builder /build/fabric-ca/bin/fabric-ca-client \
 # copy configuration template
 COPY ./fabric-ca-client-config.yaml.tpl /app/
 
+# install default fxconfig config (loaded from $HOME/.fxconfig/config.yaml)
+RUN mkdir -p /app/.fxconfig
+COPY ./fxconfig-defaults.yaml /app/.fxconfig/config.yaml
+
+ENV HOME="/app"
 ENV PATH="/app:${PATH}"

@@ -1,0 +1,7 @@
+msp:
+  localMspID: Org1MSP
+orderer:
+  channel: arma
+  connectionTimeout: 60s
+queries:
+  connectionTimeout: 60s

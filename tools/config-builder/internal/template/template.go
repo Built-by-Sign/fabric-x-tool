@@ -323,6 +323,15 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 			data.CommitterPort = 5300 // Default coordinator port
 		}
 
+		// Populate MSP identity for orderer deliver authorization (v0.1.9+).
+		// Uses the first peer org's channel_admin user, which is the same identity
+		// fxconfig uses for namespace operations (always present as a channel admin).
+		if len(e.config.PeerOrgs) > 0 {
+			org := e.config.PeerOrgs[0]
+			data.SidecarIdentityMSPID = org.Name
+			data.SidecarIdentityMSPDir = "/msp/channel_admin"
+		}
+
 		// Collect all orderer assembler endpoints
 		for _, org := range e.config.OrdererOrgs {
 			for _, orderer := range org.Orderers {

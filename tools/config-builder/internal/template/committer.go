@@ -27,6 +27,12 @@ type CommitterTemplateData struct {
 	VerifierEndpoints  []EndpointConfig // For coordinator: list of verifier endpoints
 	ValidatorEndpoints []EndpointConfig // For coordinator: list of validator endpoints
 	AssemblerEndpoints []EndpointConfig // For sidecar: list of orderer assembler endpoints
+
+	// For sidecar v0.1.9+: MSP identity required for orderer deliver authorization.
+	// Signer returns nil when MSPID or MSPDir is empty, causing orderer to reject
+	// the unsigned deliver request with FORBIDDEN.
+	SidecarIdentityMSPID  string
+	SidecarIdentityMSPDir string
 }
 
 // DatabaseConfig holds database configuration
@@ -233,6 +239,23 @@ orderer:
 {{- range .AssemblerEndpoints }}
       - {{ .Host }}:{{ .Port }}
 {{- end }}
+  # v0.1.9+ requires signer identity for orderer deliver requests (otherwise FORBIDDEN).
+  # Organizations are auto-discovered from the bootstrap config block.
+  # BCCSP is wired to PKCS11 because the MSP private key (priv_sk is a marker file)
+  # actually lives in the KMS. Label/Pin are left blank here and overridden at runtime
+  # via the SC_SIDECAR_ORDERER_IDENTITY_BCCSP_PKCS11_{LABEL,PIN} env vars set by docker
+  # compose (so no secret goes into the YAML).
+  identity:
+    msp-id: {{ .SidecarIdentityMSPID }}
+    msp-dir: {{ .SidecarIdentityMSPDir }}
+    bccsp:
+      Default: PKCS11
+      PKCS11:
+        Security: 256
+        Hash: SHA2
+        Library: /usr/local/lib/libkms_pkcs11.so
+        Label: ""
+        Pin: ""
 committer:
   endpoint:
     host: {{ .CommitterHost }}
