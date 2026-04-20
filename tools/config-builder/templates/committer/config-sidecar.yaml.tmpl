@@ -1,0 +1,79 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/config-sidecar.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+#
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+{{ template "server" . }}
+orderer:
+  channel-id: {{ .ChannelID }}
+  consensus-type: BFT
+  organizations:
+{{- range .OrdererOrganizations }}
+    {{ .Name }}:
+      endpoints:
+{{- range .Endpoints }}
+        - {{ . }}
+{{- end }}
+{{- if .CACertPaths }}
+      ca-cert-paths:
+{{- range .CACertPaths }}
+        - {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .OrdererTLS }}
+  tls:
+{{- if .OrdererTLS.CommonCACertPaths }}
+    common-ca-cert-paths:
+{{- range .OrdererTLS.CommonCACertPaths }}
+      - {{ . }}
+{{- end }}
+{{- end }}
+    key-path: {{ .OrdererTLS.KeyPath }}
+    cert-path: {{ .OrdererTLS.CertPath }}
+    mode: {{ .OrdererTLS.Mode }}
+{{- end }}
+  identity:
+    msp-id: {{ .SidecarIdentityMSPID }}
+    msp-dir: {{ .SidecarIdentityMSPDir }}
+{{- if .SidecarIdentityBCCSP }}
+    bccsp:
+      Default: {{ .SidecarIdentityBCCSP.Default }}
+{{- if .SidecarIdentityBCCSP.PKCS11 }}
+      PKCS11:
+        Library: {{ .SidecarIdentityBCCSP.PKCS11.Library }}
+        Label: "{{ .SidecarIdentityBCCSP.PKCS11.Label }}"
+        Pin: "{{ .SidecarIdentityBCCSP.PKCS11.Pin }}"
+        Hash: {{ .SidecarIdentityBCCSP.PKCS11.Hash }}
+        Security: {{ .SidecarIdentityBCCSP.PKCS11.Security }}
+{{- end }}
+{{- if .SidecarIdentityBCCSP.SW }}
+      SW:
+        Hash: {{ .SidecarIdentityBCCSP.SW.Hash }}
+        Security: {{ .SidecarIdentityBCCSP.SW.Security }}
+{{- end }}
+{{- end }}
+committer:
+  endpoint: {{ .CommitterHost }}:{{ .CommitterPort }}
+{{- if .CommitterTLS }}
+  tls:
+    ca-cert-paths:
+{{- range .CommitterTLS.CACertPaths }}
+      - {{ . }}
+{{- end }}
+    key-path: {{ .CommitterTLS.KeyPath }}
+    cert-path: {{ .CommitterTLS.CertPath }}
+    mode: {{ .CommitterTLS.Mode }}
+{{- end }}
+ledger:
+  path: {{ .ConfigDir }}/ledger
+last-committed-block-set-interval: 5s
+bootstrap:
+  genesis-block-file-path: {{ .GenesisBlockPath }}
+{{ template "monitoring" . }}
+{{ template "logging" . }}

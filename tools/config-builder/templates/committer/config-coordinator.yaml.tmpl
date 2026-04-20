@@ -1,0 +1,47 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/config-coordinator.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+#
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+{{ template "server" . }}
+verifier:
+  endpoints:
+{{- range .VerifierEndpoints }}
+    - {{ .Host }}:{{ .Port }}
+{{- end }}
+{{- if .VerifierTLS }}
+  tls:
+    ca-cert-paths:
+{{- range .VerifierTLS.CACertPaths }}
+      - {{ . }}
+{{- end }}
+    key-path: {{ .VerifierTLS.KeyPath }}
+    cert-path: {{ .VerifierTLS.CertPath }}
+    mode: {{ .VerifierTLS.Mode }}
+{{- end }}
+validator-committer:
+  endpoints:
+{{- range .ValidatorEndpoints }}
+    - {{ .Host }}:{{ .Port }}
+{{- end }}
+{{- if .ValidatorTLS }}
+  tls:
+    ca-cert-paths:
+{{- range .ValidatorTLS.CACertPaths }}
+      - {{ . }}
+{{- end }}
+    key-path: {{ .ValidatorTLS.KeyPath }}
+    cert-path: {{ .ValidatorTLS.CertPath }}
+    mode: {{ .ValidatorTLS.Mode }}
+{{- end }}
+dependency-graph:
+  num-of-local-dep-constructors: 4
+  waiting-txs-limit: 20000000
+per-channel-buffer-size-per-goroutine: 10
+{{ template "monitoring" . }}
+{{ template "logging" . }}

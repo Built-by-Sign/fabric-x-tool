@@ -1,0 +1,178 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/configtxgen/templates/configtx.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+#
+################################################################################
+#
+#   ORGANIZATIONS
+#
+################################################################################
+---
+Organizations:{{range .OrdererOrgs}}
+  - &{{.MSPID}}MSP
+    Name: {{.Name}}
+    SkipAsForeign: false
+    ID: {{.MSPID}}MSP
+    MSPDir: {{.MSPDir}}
+    Policies: &{{.MSPID}}Policies
+      Readers:
+        Type: Signature
+        Rule: OR('{{.MSPID}}MSP.member')
+      Writers:
+        Type: Signature
+        Rule: OR('{{.MSPID}}MSP.member')
+      Admins:
+        Type: Signature
+        Rule: OR('{{.MSPID}}MSP.admin'){{if .OrdererEndpoints}}
+    OrdererEndpoints:{{range .OrdererEndpoints}}
+      - {{.}}{{end}}{{end}}{{end}}{{range .PeerOrgs}}
+  - &{{.MSPID}}MSP
+    Name: {{.Name}}
+    ID: {{.MSPID}}MSP
+    MSPDir: {{.MSPDir}}
+    Policies: &{{.MSPID}}Policies
+      Readers:
+        Type: Signature
+        Rule: OR('{{.MSPID}}MSP.member')
+      Writers:
+        Type: Signature
+        Rule: OR('{{.MSPID}}MSP.member')
+      Admins:
+        Type: Signature
+        Rule: OR('{{.MSPID}}MSP.admin'){{end}}
+
+################################################################################
+#
+#   CAPABILITIES
+#
+################################################################################
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_0: true
+
+################################################################################
+#
+#   APPLICATION
+#
+################################################################################
+Application: &ApplicationDefaults
+  Organizations:{{range .ApplicationOrgs}}
+    - *{{.}}MSP{{end}}
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: ANY Readers
+    Writers:
+      Type: ImplicitMeta
+      Rule: ANY Writers
+    Admins:
+      Type: ImplicitMeta
+      Rule: ANY Admins
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: ANY Endorsement
+    LifecycleEndorsement:{{if .HasPeerOrgs}}
+      Type: Signature
+      Rule: OR({{.LifecycleEndorsementRule}}){{else}}
+      Type: ImplicitMeta
+      Rule: ANY Admins{{end}}
+  Capabilities:
+    <<: *ApplicationCapabilities
+  ACLs:
+    _lifecycle/CheckCommitReadiness: /Channel/Application/Writers
+    _lifecycle/CommitChaincodeDefinition: /Channel/Application/Writers
+    _lifecycle/QueryChaincodeDefinition: /Channel/Application/Writers
+    _lifecycle/QueryChaincodeDefinitions: /Channel/Application/Writers
+    lscc/ChaincodeExists: /Channel/Application/Readers
+    lscc/GetDeploymentSpec: /Channel/Application/Readers
+    lscc/GetChaincodeData: /Channel/Application/Readers
+    lscc/GetInstantiatedChaincodes: /Channel/Application/Readers
+    qscc/GetChainInfo: /Channel/Application/Readers
+    qscc/GetBlockByNumber: /Channel/Application/Readers
+    qscc/GetBlockByHash: /Channel/Application/Readers
+    qscc/GetTransactionByID: /Channel/Application/Readers
+    qscc/GetBlockByTxID: /Channel/Application/Readers
+    cscc/GetConfigBlock: /Channel/Application/Readers
+    cscc/GetChannelConfig: /Channel/Application/Readers
+    peer/Propose: /Channel/Application/Writers
+    peer/ChaincodeToChaincode: /Channel/Application/Writers
+    event/Block: /Channel/Application/Readers
+    event/FilteredBlock: /Channel/Application/Readers
+
+################################################################################
+#
+#   ORDERER
+#
+################################################################################
+Orderer: &OrdererDefaults
+  OrdererType: arma
+  BatchTimeout: 500ms
+  BatchSize:
+    MaxMessageCount: 3500
+    AbsoluteMaxBytes: 16 MB
+    PreferredMaxBytes: 4 MB
+  MaxChannels: 0
+  Capabilities:
+    <<: *OrdererCapabilities
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: ANY Readers
+    Writers:
+      Type: ImplicitMeta
+      Rule: ANY Writers
+    Admins:
+      Type: ImplicitMeta
+      Rule: MAJORITY Admins
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: ANY Writers
+  Organizations:{{range .OrdererOrgRefs}}
+    - *{{.}}MSP{{end}}
+  ConsenterMapping:{{range .Consenters}}
+    - ID: {{.ID}}
+      Host: {{.Host}}
+      Port: {{.Port}}
+      MSPID: {{.MSPID}}MSP
+      Identity: {{.Identity}}
+      ClientTLSCert: {{.ClientTLSCert}}
+      ServerTLSCert: {{.ServerTLSCert}}{{end}}
+
+################################################################################
+#
+#   CHANNEL
+#
+################################################################################
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: ANY Readers
+    Writers:
+      Type: ImplicitMeta
+      Rule: ANY Writers
+    Admins:
+      Type: ImplicitMeta
+      Rule: MAJORITY Admins
+  Capabilities:
+    <<: *ChannelCapabilities
+
+################################################################################
+#
+#   PROFILES
+#
+################################################################################
+Profiles:
+  OrgsChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Arma:
+        Path: {{.ArmaSharedConfigPath}}
+    Consortium: SampleConsortium
+    Application:
+      <<: *ApplicationDefaults

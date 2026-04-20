@@ -6,189 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/template"
 
 	"config-builder/internal/config"
+	templatefiles "config-builder/templates"
 )
-
-// configtxTemplate is the template for generating configtx.yaml
-// It uses YAML anchors and merge keys like Ansible does
-const configtxTemplate = `#
-################################################################################
-#
-#   ORGANIZATIONS
-#
-################################################################################
----
-Organizations:{{range .OrdererOrgs}}
-  - &{{.MSPID}}MSP
-    Name: {{.Name}}
-    SkipAsForeign: false
-    ID: {{.MSPID}}MSP
-    MSPDir: {{.MSPDir}}
-    Policies: &{{.MSPID}}Policies
-      Readers:
-        Type: Signature
-        Rule: OR('{{.MSPID}}MSP.member')
-      Writers:
-        Type: Signature
-        Rule: OR('{{.MSPID}}MSP.member')
-      Admins:
-        Type: Signature
-        Rule: OR('{{.MSPID}}MSP.admin'){{if .OrdererEndpoints}}
-    OrdererEndpoints:{{range .OrdererEndpoints}}
-      - {{.}}{{end}}{{end}}{{end}}{{range .PeerOrgs}}
-  - &{{.MSPID}}MSP
-    Name: {{.Name}}
-    ID: {{.MSPID}}MSP
-    MSPDir: {{.MSPDir}}
-    Policies: &{{.MSPID}}Policies
-      Readers:
-        Type: Signature
-        Rule: OR('{{.MSPID}}MSP.member')
-      Writers:
-        Type: Signature
-        Rule: OR('{{.MSPID}}MSP.member')
-      Admins:
-        Type: Signature
-        Rule: OR('{{.MSPID}}MSP.admin'){{end}}
-
-################################################################################
-#
-#   CAPABILITIES
-#
-################################################################################
-Capabilities:
-  Channel: &ChannelCapabilities
-    V2_0: true
-  Orderer: &OrdererCapabilities
-    V2_0: true
-  Application: &ApplicationCapabilities
-    V2_0: true
-
-################################################################################
-#
-#   APPLICATION
-#
-################################################################################
-Application: &ApplicationDefaults
-  Organizations:{{range .ApplicationOrgs}}
-    - *{{.}}MSP{{end}}
-  Policies:
-    Readers:
-      Type: ImplicitMeta
-      Rule: ANY Readers
-    Writers:
-      Type: ImplicitMeta
-      Rule: ANY Writers
-    Admins:
-      Type: ImplicitMeta
-      Rule: ANY Admins
-    Endorsement:
-      Type: ImplicitMeta
-      Rule: ANY Endorsement
-    LifecycleEndorsement:{{if .HasPeerOrgs}}
-      Type: Signature
-      Rule: OR({{.LifecycleEndorsementRule}}){{else}}
-      Type: ImplicitMeta
-      Rule: ANY Admins{{end}}
-  Capabilities:
-    <<: *ApplicationCapabilities
-  ACLs:
-    _lifecycle/CheckCommitReadiness: /Channel/Application/Writers
-    _lifecycle/CommitChaincodeDefinition: /Channel/Application/Writers
-    _lifecycle/QueryChaincodeDefinition: /Channel/Application/Writers
-    _lifecycle/QueryChaincodeDefinitions: /Channel/Application/Writers
-    lscc/ChaincodeExists: /Channel/Application/Readers
-    lscc/GetDeploymentSpec: /Channel/Application/Readers
-    lscc/GetChaincodeData: /Channel/Application/Readers
-    lscc/GetInstantiatedChaincodes: /Channel/Application/Readers
-    qscc/GetChainInfo: /Channel/Application/Readers
-    qscc/GetBlockByNumber: /Channel/Application/Readers
-    qscc/GetBlockByHash: /Channel/Application/Readers
-    qscc/GetTransactionByID: /Channel/Application/Readers
-    qscc/GetBlockByTxID: /Channel/Application/Readers
-    cscc/GetConfigBlock: /Channel/Application/Readers
-    cscc/GetChannelConfig: /Channel/Application/Readers
-    peer/Propose: /Channel/Application/Writers
-    peer/ChaincodeToChaincode: /Channel/Application/Writers
-    event/Block: /Channel/Application/Readers
-    event/FilteredBlock: /Channel/Application/Readers
-
-################################################################################
-#
-#   ORDERER
-#
-################################################################################
-Orderer: &OrdererDefaults
-  OrdererType: arma
-  BatchTimeout: 500ms
-  BatchSize:
-    MaxMessageCount: 3500
-    AbsoluteMaxBytes: 16 MB
-    PreferredMaxBytes: 4 MB
-  MaxChannels: 0
-  Capabilities:
-    <<: *OrdererCapabilities
-  Policies:
-    Readers:
-      Type: ImplicitMeta
-      Rule: ANY Readers
-    Writers:
-      Type: ImplicitMeta
-      Rule: ANY Writers
-    Admins:
-      Type: ImplicitMeta
-      Rule: MAJORITY Admins
-    BlockValidation:
-      Type: ImplicitMeta
-      Rule: ANY Writers
-  Organizations:{{range .OrdererOrgRefs}}
-    - *{{.}}MSP{{end}}
-  ConsenterMapping:{{range .Consenters}}
-    - ID: {{.ID}}
-      Host: {{.Host}}
-      Port: {{.Port}}
-      MSPID: {{.MSPID}}MSP
-      Identity: {{.Identity}}
-      ClientTLSCert: {{.ClientTLSCert}}
-      ServerTLSCert: {{.ServerTLSCert}}{{end}}
-
-################################################################################
-#
-#   CHANNEL
-#
-################################################################################
-Channel: &ChannelDefaults
-  Policies:
-    Readers:
-      Type: ImplicitMeta
-      Rule: ANY Readers
-    Writers:
-      Type: ImplicitMeta
-      Rule: ANY Writers
-    Admins:
-      Type: ImplicitMeta
-      Rule: MAJORITY Admins
-  Capabilities:
-    <<: *ChannelCapabilities
-
-################################################################################
-#
-#   PROFILES
-#
-################################################################################
-Profiles:
-  OrgsChannel:
-    <<: *ChannelDefaults
-    Orderer:
-      <<: *OrdererDefaults
-      Arma:
-        Path: {{.ArmaSharedConfigPath}}
-    Consortium: SampleConsortium
-    Application:
-      <<: *ApplicationDefaults
-`
 
 // TemplateData holds data for configtx.yaml template
 type TemplateData struct {
@@ -235,7 +56,7 @@ func (g *Generator) generateConfigtxFromTemplate() (string, error) {
 	data := g.buildTemplateData()
 
 	// Parse and execute template
-	tmpl, err := template.New("configtx").Parse(configtxTemplate)
+	tmpl, err := templatefiles.Parse("genesis/configtx.yaml.tmpl", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -271,8 +92,9 @@ func (g *Generator) buildTemplateData() *TemplateData {
 	}
 
 	// Build orderer organizations
-	for _, org := range g.config.OrdererOrgs {
+	for orgIndex, org := range g.config.OrdererOrgs {
 		mspID := config.DeriveMSPIDBase(org.Name)
+		partyID := orgIndex + 1
 
 		// Check MSP directory path
 		mspDir := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "msp")
@@ -284,7 +106,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			Name:             org.Name,
 			MSPID:            mspID,
 			MSPDir:           mspDir,
-			OrdererEndpoints: g.getOrdererEndpoints(&org),
+			OrdererEndpoints: g.getOrdererEndpoints(&org, partyID),
 		}
 		data.OrdererOrgs = append(data.OrdererOrgs, orgData)
 		data.OrdererOrgRefs = append(data.OrdererOrgRefs, mspID)
@@ -292,7 +114,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 		// Add consenters for ConsenterMapping (only consenter type orderers)
 		for _, orderer := range org.Orderers {
 			if orderer.Type == "consenter" {
-				consenter := g.buildConsenterData(&org, &orderer, mspID, cryptoArtifactsDir)
+				consenter := g.buildConsenterData(&org, &orderer, mspID, partyID, cryptoArtifactsDir)
 				data.Consenters = append(data.Consenters, consenter)
 			}
 		}
@@ -332,10 +154,10 @@ func (g *Generator) buildTemplateData() *TemplateData {
 }
 
 // buildConsenterData builds consenter data for ConsenterMapping
-func (g *Generator) buildConsenterData(org *config.OrdererOrg, orderer *config.Node, mspID, cryptoArtifactsDir string) ConsenterData {
+func (g *Generator) buildConsenterData(org *config.OrdererOrg, orderer *config.Node, mspID string, partyID int, cryptoArtifactsDir string) ConsenterData {
 	host := orderer.Host
 	if host == "" {
-		host = "localhost"
+		host = getDefaultHost()
 	}
 	port := orderer.Port
 	if port == 0 {
@@ -356,7 +178,7 @@ func (g *Generator) buildConsenterData(org *config.OrdererOrg, orderer *config.N
 	tlsCert := filepath.Join(basePath, "tls", "server.crt")
 
 	return ConsenterData{
-		ID:            1, // Default group ID, can be configured later
+		ID:            partyID,
 		Host:          host,
 		Port:          port,
 		MSPID:         mspID,

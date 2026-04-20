@@ -1,0 +1,28 @@
+# Local template for config-builder; no direct upstream Jinja counterpart.
+# The official committer role does not render a standalone DB config file.
+# Kept here as a local placeholder aligned with the non-Kubernetes Docker flow.
+#
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# Local placeholder for the db component. The official committer role does not
+# render a standalone config file for the database container.
+{{ if .Database }}
+database:
+  type: {{ .Database.Type }}
+  endpoints:
+{{- range .Database.Endpoints }}
+    - {{ . }}
+{{- end }}
+  user: {{ .Database.User }}
+  password: {{ .Database.Password }}
+  database: {{ .Database.DBName }}
+{{- if .Database.TLS }}
+  tls:
+    mode: {{ .Database.TLS.Mode }}
+    ca-cert-path: {{ .Database.TLS.CACertPath }}
+{{- end }}
+{{ end }}

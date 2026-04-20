@@ -89,7 +89,7 @@ func (g *FabricCAGenerator) Generate() error {
 	}
 	for _, org := range g.config.PeerOrgs {
 		// For each peer org: nodes + TLS + Admin + users + org MSP
-		g.totalSteps += len(org.Peers)*2 + 1 + len(org.Users) + 1
+		g.totalSteps += (len(org.Peers)+len(g.committerPeerNamesForOrg(&org)))*2 + 1 + len(nonAdminUsers(org.Users)) + 1
 	}
 	g.currentStep = 0
 
@@ -160,6 +160,19 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 			UserPin: userPin,
 		}
 	}
+	seenPeers := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		seenPeers[node.Name] = struct{}{}
+	}
+	for _, committerName := range g.committerPeerNamesForOrg(&org) {
+		if _, exists := seenPeers[committerName]; exists {
+			continue
+		}
+		nodes = append(nodes, NodeInfo{
+			Name:    committerName,
+			UserPin: orgUserPin,
+		})
+	}
 
 	tokenLabel, err := g.config.ResolveKMSTokenLabel(org.KMSTokenLabel)
 	if err != nil {
@@ -171,9 +184,10 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 	}
 
 	// Generate crypto materials for users (Admin, channel_admin, endorser, etc.)
-	if len(org.Users) > 0 {
+	users := nonAdminUsers(org.Users)
+	if len(users) > 0 {
 		g.log("Generating crypto for %d users in peer org: %s (concurrent mode with max %d workers)",
-			len(org.Users), org.Name, g.maxConcurrency)
+			len(users), org.Name, g.maxConcurrency)
 
 		absOutputDir, err := filepath.Abs(g.outputDir)
 		if err != nil {
@@ -193,7 +207,7 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 		}
 
 		if err := g.generateUsersParallel(org.Domain, g.config.KMS.CAURL, tokenLabel,
-			defaultUserPin, org.Users, cryptoDir, caCertData, tlsCACertData); err != nil {
+			defaultUserPin, users, cryptoDir, caCertData, tlsCACertData); err != nil {
 			return err
 		}
 	}
@@ -201,10 +215,40 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 	return nil
 }
 
+func nonAdminUsers(users []config.User) []config.User {
+	filtered := make([]config.User, 0, len(users))
+	for _, user := range users {
+		if user.Name == "Admin" {
+			continue
+		}
+		filtered = append(filtered, user)
+	}
+	return filtered
+}
+
+func (g *FabricCAGenerator) committerPeerNamesForOrg(org *config.PeerOrg) []string {
+	if g.config.TLS != nil && g.config.TLS.Enabled {
+		byOrg, err := g.config.ResolveCommitterCryptoIdentitiesByOrg()
+		if err != nil {
+			return nil
+		}
+		return byOrg[org.Name]
+	}
+	byOrg, err := g.config.ResolveSidecarIdentitiesByOrg()
+	if err != nil {
+		return nil
+	}
+	return byOrg[org.Name]
+}
+
 // GenerateOrgCrypto generates crypto materials for an organization using fabric-ca-client
 // This method uses docker run to execute fabric-x-tool image with fabric-ca-client
 // orgType should be "orderer" or "peer"
 func (g *FabricCAGenerator) GenerateOrgCrypto(orgName, domain, caURL, tokenLabel string, nodes []NodeInfo, orgType string) error {
+	if len(nodes) == 0 {
+		return fmt.Errorf("%s org %s.%s requires at least one node identity", orgType, orgName, domain)
+	}
+
 	absOutputDir, err := filepath.Abs(g.outputDir)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute output path: %w", err)
@@ -285,48 +329,9 @@ func (g *FabricCAGenerator) generateNodeCrypto(orgName, domain, caURL, tokenLabe
 
 	// Rename signcerts/cert.pem to signcerts/{node}.{domain}-cert.pem
 	// This is required by armageddon tool which expects the specific naming format
-	signcertsDir := filepath.Join(nodeDir, "signcerts")
-	srcCertPath := filepath.Join(signcertsDir, "cert.pem")
 	nodeFQDN := fmt.Sprintf("%s.%s", node.Name, domain)
-	dstCertPath := filepath.Join(signcertsDir, fmt.Sprintf("%s-cert.pem", nodeFQDN))
-
-	// Check if source certificate file exists
-	if _, err := os.Stat(srcCertPath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("certificate file not found: %s", srcCertPath)
-		}
-		return fmt.Errorf("failed to check certificate file: %w", err)
-	}
-
-	// Rename the certificate file
-	if err := os.Rename(srcCertPath, dstCertPath); err != nil {
-		return fmt.Errorf("failed to rename certificate from %s to %s: %w", srcCertPath, dstCertPath, err)
-	}
-
-	g.logDetails("  Renamed certificate: %s -> %s", srcCertPath, dstCertPath)
-
-	// Rename cacerts CA certificate to standard format: ca.{domain}-cert.pem
-	// This matches cryptogen behavior and ensures config.yaml references work correctly
-	// fabric-ca-client generates certificates with names based on CA URL (e.g., host-docker-internal-7054.pem)
-	// but config.yaml expects ca.{domain}-cert.pem format
-	cacertsDir := filepath.Join(nodeDir, "cacerts")
-	if entries, err := os.ReadDir(cacertsDir); err == nil && len(entries) > 0 {
-		// Find the first .pem file (should be the CA certificate)
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".pem") {
-				srcCACertPath := filepath.Join(cacertsDir, entry.Name())
-				dstCACertPath := filepath.Join(cacertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
-
-				// Only rename if it's not already in the correct format
-				if entry.Name() != fmt.Sprintf("ca.%s-cert.pem", domain) {
-					if err := os.Rename(srcCACertPath, dstCACertPath); err != nil {
-						return fmt.Errorf("failed to rename CA certificate from %s to %s: %w", srcCACertPath, dstCACertPath, err)
-					}
-					g.logDetails("  Renamed CA certificate: %s -> %s", entry.Name(), fmt.Sprintf("ca.%s-cert.pem", domain))
-				}
-				break
-			}
-		}
+	if err := g.normalizeEnrolledMSP(nodeDir, domain, nodeFQDN); err != nil {
+		return fmt.Errorf("failed to normalize node MSP: %w", err)
 	}
 
 	// WORKAROUND: Create priv_sk file in keystore for fabric-x-orderer compatibility
@@ -529,6 +534,11 @@ func (g *FabricCAGenerator) GenerateAdminUser(domain, caURL, tokenLabel string, 
 
 	g.logProgress("Generated Admin user certificate for %s", domain)
 
+	adminFQDN := fmt.Sprintf("Admin@%s", domain)
+	if err := g.normalizeEnrolledMSP(adminDir, domain, adminFQDN); err != nil {
+		return fmt.Errorf("failed to normalize Admin MSP: %w", err)
+	}
+
 	// WORKAROUND: Create priv_sk marker file for Admin user as well
 	keystoreDir := filepath.Join(adminDir, "keystore")
 	privSkPath := filepath.Join(keystoreDir, "priv_sk")
@@ -578,6 +588,49 @@ func (g *FabricCAGenerator) generateMSPConfig(mspDir, domain string) error {
 
 	g.logDetails("  Generated MSP config.yaml: %s", configPath)
 	return nil
+}
+
+// normalizeEnrolledMSP reshapes fabric-ca-client output to match cryptogen's
+// filenames. Later config/copy logic expects this deterministic layout.
+func (g *FabricCAGenerator) normalizeEnrolledMSP(mspDir, domain, certBaseName string) error {
+	signcertsDir := filepath.Join(mspDir, "signcerts")
+	srcCertPath := filepath.Join(signcertsDir, "cert.pem")
+	dstCertPath := filepath.Join(signcertsDir, fmt.Sprintf("%s-cert.pem", certBaseName))
+
+	if _, err := os.Stat(srcCertPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("certificate file not found: %s", srcCertPath)
+		}
+		return fmt.Errorf("failed to check certificate file: %w", err)
+	}
+	if err := os.Rename(srcCertPath, dstCertPath); err != nil {
+		return fmt.Errorf("failed to rename certificate from %s to %s: %w", srcCertPath, dstCertPath, err)
+	}
+	g.logDetails("  Renamed certificate: %s -> %s", srcCertPath, dstCertPath)
+
+	cacertsDir := filepath.Join(mspDir, "cacerts")
+	entries, err := os.ReadDir(cacertsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read cacerts directory: %w", err)
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("no CA certificate found in %s", cacertsDir)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pem") {
+			continue
+		}
+		srcCACertPath := filepath.Join(cacertsDir, entry.Name())
+		dstCACertPath := filepath.Join(cacertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
+		if entry.Name() != fmt.Sprintf("ca.%s-cert.pem", domain) {
+			if err := os.Rename(srcCACertPath, dstCACertPath); err != nil {
+				return fmt.Errorf("failed to rename CA certificate from %s to %s: %w", srcCACertPath, dstCACertPath, err)
+			}
+			g.logDetails("  Renamed CA certificate: %s -> %s", entry.Name(), fmt.Sprintf("ca.%s-cert.pem", domain))
+		}
+		return nil
+	}
+	return fmt.Errorf("no CA certificate PEM found in %s", cacertsDir)
 }
 
 // createOrgMSP creates organization-level MSP directory structure
@@ -675,6 +728,10 @@ func (g *FabricCAGenerator) copyFile(src, dst string) error {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer sourceFile.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
 
 	destFile, err := os.Create(dst)
 	if err != nil {

@@ -1,0 +1,20 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/config-validator.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+#
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+{{ template "server" . }}
+{{ template "database" . }}
+resource-limits:
+  max-workers-for-preparer: 1
+  max-workers-for-validator: 1
+  max-workers-for-committer: 20
+  min-transaction-batch-size: 1
+  timeout-for-min-transaction-batch-size: 2s
+{{ template "monitoring" . }}
+{{ template "logging" . }}

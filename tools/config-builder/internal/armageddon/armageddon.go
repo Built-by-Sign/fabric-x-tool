@@ -5,12 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"text/template"
 
 	"config-builder/internal/config"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
+	templatefiles "config-builder/templates"
 )
 
 const (
@@ -188,10 +185,7 @@ func (g *Generator) generateSharedConfigYaml() (string, error) {
 	data := g.buildTemplateData()
 
 	// Parse and execute template
-	caser := cases.Title(language.English)
-	tmpl, err := template.New("shared_config").Funcs(template.FuncMap{
-		"title": caser.String,
-	}).Parse(sharedConfigTemplate)
+	tmpl, err := templatefiles.Parse("armageddon/shared_config.yaml.tmpl", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}

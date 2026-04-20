@@ -79,8 +79,43 @@ type User struct {
 
 // CommitterConfig represents committer component configuration
 type CommitterConfig struct {
-	UsePostgres bool            `yaml:"use_postgres"`
-	Components  []CommitterNode `yaml:"components"`
+	UsePostgres     bool                   `yaml:"use_postgres"`
+	Database        *CommitterDatabase     `yaml:"database,omitempty"`
+	SidecarIdentity *SidecarIdentityConfig `yaml:"sidecar_identity,omitempty"`
+	Components      []CommitterNode        `yaml:"components"`
+}
+
+// CommitterDatabase represents an external database connection used by
+// validator/query-service, aligned with the Fabric-X Ansible collection's
+// database configuration model.
+type CommitterDatabase struct {
+	Type                 string             `yaml:"type,omitempty"` // postgres or yugabyte
+	Endpoints            []DatabaseEndpoint `yaml:"endpoints,omitempty"`
+	Username             string             `yaml:"username,omitempty"`
+	Password             string             `yaml:"password,omitempty"`
+	Database             string             `yaml:"database,omitempty"`
+	LoadBalance          *bool              `yaml:"load_balance,omitempty"`
+	TablePreSplitTablets int                `yaml:"table_pre_split_tablets,omitempty"`
+	TLS                  *DatabaseTLS       `yaml:"tls,omitempty"`
+}
+
+// DatabaseEndpoint is a database host:port pair.
+type DatabaseEndpoint struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
+// DatabaseTLS configures one-way TLS for database connections.
+type DatabaseTLS struct {
+	Enabled    bool   `yaml:"enabled"`
+	CACertPath string `yaml:"ca_cert_path,omitempty"`
+}
+
+// SidecarIdentityConfig selects the peer-organization identity used by the
+// committer sidecar when it signs deliver requests to orderers.
+type SidecarIdentityConfig struct {
+	Org  string `yaml:"org,omitempty"`
+	Name string `yaml:"name,omitempty"`
 }
 
 // CommitterNode represents a committer component
@@ -128,6 +163,26 @@ func DefaultMonitoringPort(servicePort int) int {
 	return 0
 }
 
+// CommitterComponentDirName returns the local-deployment directory for a
+// committer component. A single component of a type keeps the Ansible-style
+// committer-<type> directory. Multiple instances of the same type need unique
+// local directories because config-builder renders them into one output tree.
+func (c *NetworkConfig) CommitterComponentDirName(component CommitterNode) string {
+	if c == nil || c.Committer == nil || component.Type == "" {
+		return "committer-" + component.Type
+	}
+	count := 0
+	for _, candidate := range c.Committer.Components {
+		if candidate.Type == component.Type {
+			count++
+		}
+	}
+	if count <= 1 || component.Name == "" {
+		return "committer-" + component.Type
+	}
+	return "committer-" + component.Name
+}
+
 // DefaultConfig returns a default network configuration
 func DefaultConfig() *NetworkConfig {
 	return &NetworkConfig{
@@ -141,6 +196,7 @@ func DefaultConfig() *NetworkConfig {
 			NetworkDriver: "bridge",
 			OrdererImage:  "hyperledger/fabric-x-orderer:local",
 			ToolsImage:    "docker.io/hyperledger/fabric-x-tools:0.0.4", // Match Ansible default
+			PostgresImage: "postgres:16",
 		},
 	}
 }

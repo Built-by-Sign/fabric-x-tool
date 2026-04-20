@@ -1,0 +1,8 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/sections/logging.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+{{ define "logging" -}}
+logging:
+  logSpec: info
+  format: "%{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s}%{color:reset} %{message}"
+{{ end -}}

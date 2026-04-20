@@ -362,7 +362,8 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 
 // buildCommitterService builds a service definition for a committer component
 func (g *Generator) buildCommitterService(serviceName string, component *config.CommitterNode, outputDir string) (Service, error) {
-	configDir := filepath.Join(outputDir, "local-deployment", serviceName, "config")
+	componentDirName := g.config.CommitterComponentDirName(*component)
+	configDir := filepath.Join(outputDir, "local-deployment", componentDirName, "config")
 	configFile := fmt.Sprintf("config-%s.yml", component.Type)
 
 	// Default committer image if not set (use a public tag if available)
@@ -412,6 +413,9 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		// Ansible mounts: {{ postgres_pgdata_dir }}:/var/lib/postgresql/data:Z
 		// Ansible sets: PGDATA: /var/lib/postgresql/data/pgdata
 		service.Image = g.config.Docker.PostgresImage
+		if service.Image == "" {
+			service.Image = "postgres:16"
+		}
 		service.Environment = append(service.Environment,
 			fmt.Sprintf("POSTGRES_USER=%s", component.PostgresUser),
 			fmt.Sprintf("POSTGRES_PASSWORD=%s", component.PostgresPassword),
@@ -425,10 +429,13 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		if component.Port > 0 {
 			service.Ports = append(service.Ports, fmt.Sprintf("%d:5432", component.Port))
 		}
-		// Mount named volume for PostgreSQL data
-		// Using a named volume instead of bind mount to avoid permission issues
-		// Docker manages permissions automatically for named volumes
-		// service.Volumes = []string{"committer-db-data:/var/lib/postgresql/data"}
+		// Mount the generated local deployment data directory, matching the
+		// non-Kubernetes Ansible layout where PostgreSQL persists under the
+		// component's local deployment tree.
+		dataDir := filepath.Join(outputDir, "local-deployment", componentDirName, "data")
+		service.Volumes = append(service.Volumes,
+			fmt.Sprintf("%s:/var/lib/postgresql/data", normalizePathForDockerCompose(dataDir)),
+		)
 		// PostgreSQL container should not have working_dir set (Ansible doesn't set it)
 		service.WorkingDir = ""
 		// Add healthcheck for PostgreSQL
@@ -464,16 +471,8 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
 		// v0.1.9+ sidecar requires orderer.identity (MSP signer) to pass orderer
-		// deliver authorization. Mount the first peer org's channel_admin MSP;
-		// the genesis block is copied into the sidecar config dir by the
-		// template engine (see internal/template/template.go).
-		if len(g.config.PeerOrgs) > 0 {
-			org := g.config.PeerOrgs[0]
-			mspHostPath := fmt.Sprintf("./build/config/cryptogen-artifacts/crypto/peerOrganizations/%s/users/channel_admin@%s/msp", org.Domain, org.Domain)
-			service.Volumes = append(service.Volumes,
-				fmt.Sprintf("%s:/msp/channel_admin:ro", mspHostPath),
-			)
-		}
+		// deliver authorization. The template engine copies the sidecar's
+		// dedicated peer MSP into /config/msp, matching the Ansible collection.
 		// Note: Ansible does not use Docker healthchecks for committer components
 	case "query-service":
 		service.Command = []string{
@@ -489,7 +488,7 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		if kmsEndpoint == "" {
 			kmsEndpoint = "http://host.docker.internal:9200"
 		}
-		tokenLabel, err := g.config.ResolveKMSTokenLabel("")
+		tokenLabel, err := g.resolveCommitterKMSTokenLabel(component)
 		if err != nil {
 			return Service{}, fmt.Errorf("committer %q: %w", component.Name, err)
 		}
@@ -519,12 +518,14 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 	// Find DB name for dependency
 	var dbName string
 	var coordinatorName string
-	for _, comp := range g.config.Committer.Components {
-		if comp.Type == "db" {
-			dbName = comp.Name
-		}
-		if comp.Type == "coordinator" {
-			coordinatorName = comp.Name
+	if g.config.Committer != nil {
+		for _, comp := range g.config.Committer.Components {
+			if comp.Type == "db" {
+				dbName = comp.Name
+			}
+			if comp.Type == "coordinator" {
+				coordinatorName = comp.Name
+			}
 		}
 	}
 
@@ -544,24 +545,39 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 	case "verifier":
 		// Verifier depends on validator being started
 		// Use service_started because validator has no healthcheck
-		for _, comp := range g.config.Committer.Components {
-			if comp.Type == "validator" {
-				service.DependsOn[comp.Name] = DependsOnCondition{Condition: "service_started"}
-				break
+		if g.config.Committer != nil {
+			for _, comp := range g.config.Committer.Components {
+				if comp.Type == "validator" {
+					service.DependsOn[comp.Name] = DependsOnCondition{Condition: "service_started"}
+					break
+				}
 			}
 		}
 	case "coordinator":
 		// Coordinator depends on verifier being started
 		// Use service_started because verifier has no healthcheck
-		for _, comp := range g.config.Committer.Components {
-			if comp.Type == "verifier" {
-				service.DependsOn[comp.Name] = DependsOnCondition{Condition: "service_started"}
-				break
+		if g.config.Committer != nil {
+			for _, comp := range g.config.Committer.Components {
+				if comp.Type == "verifier" {
+					service.DependsOn[comp.Name] = DependsOnCondition{Condition: "service_started"}
+					break
+				}
 			}
 		}
 	}
 
 	return service, nil
+}
+
+func (g *Generator) resolveCommitterKMSTokenLabel(component *config.CommitterNode) (string, error) {
+	if component.Type == "sidecar" {
+		org, _, err := g.config.ResolveSidecarIdentity(component.Name)
+		if err != nil {
+			return "", err
+		}
+		return g.config.ResolveKMSTokenLabel(org.KMSTokenLabel)
+	}
+	return g.config.ResolveKMSTokenLabel("")
 }
 
 // log prints a message if verbose mode is enabled

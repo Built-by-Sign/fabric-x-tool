@@ -1,0 +1,32 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/sections/database.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+{{ define "database" -}}
+{{ if .Database }}
+database:
+  endpoints:
+{{- range .Database.Endpoints }}
+    - {{ . }}
+{{- end }}
+  username: {{ .Database.User }}
+  password: {{ .Database.Password }}
+  database: {{ .Database.DBName }}
+{{- if .Database.TLS }}
+  tls:
+    mode: {{ .Database.TLS.Mode }}
+    ca-cert-path: {{ .Database.TLS.CACertPath }}
+{{- end }}
+  max-connections: 10
+  min-connections: 5
+  load-balance: {{ .Database.LoadBalance }}
+{{- if eq .Database.Type "yugabyte" }}
+  table-pre-split-tablets: {{ .Database.TablePreSplitTablets }}
+{{- end }}
+  retry:
+    initial-interval: 500ms
+    randomization-factor: 0.5
+    multiplier: 1.5
+    max-interval: 60s
+    max-elapsed-time: 15m
+{{ end }}
+{{ end -}}

@@ -1,0 +1,60 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/orderer/templates/sections/general.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+{{ define "general" -}}
+General:
+    ListenAddress: {{ .ListenAddress }}
+    ListenPort: {{ .ListenPort }}
+    TLS:
+        Enabled: {{ .TLS.Enabled | boolToLower }}
+        ClientAuthRequired: {{ .TLS.ClientAuthRequired | boolToLower }}
+        PrivateKey: {{ .TLS.PrivateKey }}
+        Certificate: {{ .TLS.Certificate }}
+        RootCAs:
+{{- range .TLS.RootCAs }}
+            - {{ . }}
+{{- end }}
+    Keepalive:
+        ClientInterval: 1m0s
+        ClientTimeout: 20s
+        ServerInterval: 2h0m0s
+        ServerTimeout: 20s
+        ServerMinInterval: 1m0s
+    Backoff:
+        BaseDelay: 1s
+        Multiplier: 1.6
+        MaxDelay: 2m0s
+    MaxRecvMsgSize: 104857600
+    MaxSendMsgSize: 104857600
+    Bootstrap:
+        Method: block
+        File: {{ .ConfigDir }}/genesis.block
+    Cluster:
+        SendBufferSize: 2000
+        ClientCertificate: {{ .TLS.Certificate }}
+        ClientPrivateKey: {{ .TLS.PrivateKey }}
+    LocalMSPDir: {{ .ConfigDir }}/msp
+    LocalMSPID: {{ .MSPID }}
+    LogSpec: info
+{{- if .BCCSP }}
+    BCCSP:
+        Default: {{ .BCCSP.Default }}
+{{- if .BCCSP.PKCS11 }}
+        PKCS11:
+            Library: {{ .BCCSP.PKCS11.Library }}
+            Pin: "{{ .BCCSP.PKCS11.Pin }}"
+            Label: "{{ .BCCSP.PKCS11.Label }}"
+            Hash: {{ .BCCSP.PKCS11.Hash }}
+            Security: {{ .BCCSP.PKCS11.Security }}
+{{- end }}
+{{- if .BCCSP.SW }}
+        SW:
+            Hash: {{ .BCCSP.SW.Hash }}
+            Security: {{ .BCCSP.SW.Security }}
+{{- end }}
+{{- end }}
+{{- if .MonitoringListenPort }}
+    MonitoringListenAddress: {{ .MonitoringListenAddress }}
+    MonitoringListenPort: {{ .MonitoringListenPort }}
+{{- end }}
+{{ end -}}

@@ -1,0 +1,67 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/armageddon/templates/shared_config.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+Parties:{{range .Parties}}
+  - PartyID: {{.PartyID}}
+    CACerts:{{range .CACerts}}
+      - {{.}}{{end}}
+    TLSCACerts:{{range .TLSCACerts}}
+      - {{.}}{{end}}
+    RouterConfig:
+      TLSCert: {{.RouterConfig.TLSCert}}
+      Host: {{.RouterConfig.Host}}
+      Port: {{.RouterConfig.Port}}
+    BatchersConfig:{{range .BatchersConfig}}
+      - ShardID: {{.ShardID}}
+        SignCert: {{.SignCert}}
+        TLSCert: {{.TLSCert}}
+        Host: {{.Host}}
+        Port: {{.Port}}{{end}}
+    ConsenterConfig:
+      SignCert: {{.ConsenterConfig.SignCert}}
+      TLSCert: {{.ConsenterConfig.TLSCert}}
+      Host: {{.ConsenterConfig.Host}}
+      Port: {{.ConsenterConfig.Port}}
+    AssemblerConfig:
+      TLSCert: {{.AssemblerConfig.TLSCert}}
+      Host: {{.AssemblerConfig.Host}}
+      Port: {{.AssemblerConfig.Port}}{{end}}
+Consensus:
+    SmartBFT:
+        selfid: 0
+        requestbatchmaxcount: 100
+        requestbatchmaxbytes: 10485760
+        requestbatchmaxinterval: 500ms
+        incomingmessagebuffersize: 200
+        requestpoolsize: 400
+        requestforwardtimeout: 10s
+        requestcomplaintimeout: 20s
+        requestautoremovetimeout: 3m0s
+        viewchangeresendinterval: 5s
+        viewchangetimeout: 20s
+        leaderheartbeattimeout: 1m0s
+        leaderheartbeatcount: 10
+        numofticksbehindbeforesyncing: 10
+        collecttimeout: 1s
+        synconstart: false
+        speedupviewchange: false
+        leaderrotation: false
+        decisionsperleader: 0
+        requestmaxbytes: 10240
+        requestpoolsubmittimeout: 5s
+Batching:
+    BatchTimeouts:
+        BatchCreationTimeout: 500ms
+        FirstStrikeThreshold: 10s
+        SecondStrikeThreshold: 10s
+        AutoRemoveTimeout: 10s
+    BatchSize:
+        MaxMessageCount: 10000
+        AbsoluteMaxBytes: 10485760
+    RequestMaxBytes: 1048576
