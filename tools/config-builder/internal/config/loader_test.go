@@ -73,6 +73,22 @@ func TestCommitterComponentDirNameUsesNameForRepeatedType(t *testing.T) {
 	}
 }
 
+func TestDefaultOrdererPort(t *testing.T) {
+	tests := map[string]int{
+		"router":    7050,
+		"batcher":   7051,
+		"consenter": 7052,
+		"assembler": 7053,
+		"unknown":   0,
+	}
+
+	for ordererType, want := range tests {
+		if got := DefaultOrdererPort(ordererType); got != want {
+			t.Fatalf("DefaultOrdererPort(%q) = %d, want %d", ordererType, got, want)
+		}
+	}
+}
+
 func TestValidateRejectsDuplicateCommitterNames(t *testing.T) {
 	cfg := &NetworkConfig{
 		ChannelID: "arma",

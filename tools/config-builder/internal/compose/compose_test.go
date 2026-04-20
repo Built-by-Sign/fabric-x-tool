@@ -45,6 +45,54 @@ func TestBuildCommitterServiceDBMountsLocalDataDir(t *testing.T) {
 	}
 }
 
+func TestBuildCommitterServiceDBEnablesPostgresTLS(t *testing.T) {
+	g := NewGenerator(&config.NetworkConfig{
+		TLS: &config.TLSConfig{Enabled: true},
+		Docker: config.DockerConfig{
+			Network:       "fx-net",
+			NetworkDriver: "bridge",
+			PostgresImage: "postgres:16",
+		},
+	}, t.TempDir(), false)
+
+	service, err := g.buildCommitterService("committer-db", &config.CommitterNode{
+		Name:             "committer-db",
+		Type:             "db",
+		Port:             15432,
+		PostgresUser:     "postgres",
+		PostgresPassword: "secret",
+		PostgresDB:       "fxdb",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("buildCommitterService returned error: %v", err)
+	}
+
+	command, ok := service.Command.([]string)
+	if !ok {
+		t.Fatalf("expected command list, got %#v", service.Command)
+	}
+	joinedCommand := strings.Join(command, " ")
+	for _, want := range []string{
+		"port=15432",
+		"ssl=on",
+		"ssl_key_file=/var/lib/postgresql/config/tls/server.key",
+		"ssl_cert_file=/var/lib/postgresql/config/tls/server.crt",
+	} {
+		if !strings.Contains(joinedCommand, want) {
+			t.Fatalf("expected postgres TLS command to contain %q, got %#v", want, command)
+		}
+	}
+	if !containsString(service.Ports, "15432:15432") {
+		t.Fatalf("expected Ansible-style same-port mapping, got %#v", service.Ports)
+	}
+	if !containsVolumeSuffix(service.Volumes, "/var/lib/postgresql/config:ro") {
+		t.Fatalf("expected postgres config volume, got %#v", service.Volumes)
+	}
+	if service.HealthCheck == nil || !strings.Contains(strings.Join(service.HealthCheck.Test, " "), "-p 15432") {
+		t.Fatalf("expected healthcheck to use configured postgres port, got %#v", service.HealthCheck)
+	}
+}
+
 func TestBuildCommitterServiceMountsAnsibleStyleConfigDir(t *testing.T) {
 	g := NewGenerator(&config.NetworkConfig{
 		Docker: config.DockerConfig{
@@ -200,6 +248,59 @@ func TestBuildComposeLocalPostgresAddsHealthyDependency(t *testing.T) {
 	}
 }
 
+func TestBuildOrdererServiceUsesDefaultPort(t *testing.T) {
+	g := NewGenerator(&config.NetworkConfig{
+		Docker: config.DockerConfig{
+			Network:       "fx-net",
+			NetworkDriver: "bridge",
+			OrdererImage:  "hyperledger/fabric-x-orderer:local",
+		},
+	}, t.TempDir(), false)
+
+	service, err := g.buildOrdererService("orderer-assembler-1", &config.OrdererOrg{
+		Name:   "Orderer",
+		Domain: "example.com",
+	}, &config.Node{
+		Name: "assembler0",
+		Type: "assembler",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("buildOrdererService returned error: %v", err)
+	}
+
+	foundServicePort := false
+	foundMonitoringPort := false
+	for _, port := range service.Ports {
+		if port == "7053:7053" {
+			foundServicePort = true
+		}
+		if port == "7063:7063" {
+			foundMonitoringPort = true
+		}
+	}
+	if !foundServicePort || !foundMonitoringPort {
+		t.Fatalf("expected default service and monitoring ports, got %#v", service.Ports)
+	}
+}
+
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsVolumeSuffix(values []string, suffix string) bool {
+	for _, value := range values {
+		if strings.HasSuffix(value, suffix) {
+			return true
+		}
+	}
+	return false
 }

@@ -135,7 +135,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := routerNode.Port
 			if port == 0 {
-				port = 7050
+				port = config.DefaultOrdererPort(routerNode.Type)
 			}
 
 			party.RouterConfig = RouterConfig{
@@ -157,7 +157,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.RouterConfig = RouterConfig{
@@ -191,7 +191,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 				}
 				port := batcherNode.Port
 				if port == 0 {
-					port = 7051
+					port = config.DefaultOrdererPort(batcherNode.Type)
 				}
 
 				party.BatchersConfig = append(party.BatchersConfig, BatcherConfig{
@@ -222,7 +222,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.BatchersConfig = []BatcherConfig{
@@ -258,7 +258,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.ConsenterConfig = ConsenterConfig{
@@ -286,7 +286,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := assemblerNode.Port
 			if port == 0 {
-				port = 7053
+				port = config.DefaultOrdererPort(assemblerNode.Type)
 			}
 
 			party.AssemblerConfig = AssemblerConfig{
@@ -309,7 +309,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.AssemblerConfig = AssemblerConfig{

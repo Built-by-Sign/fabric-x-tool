@@ -161,7 +161,7 @@ func (g *Generator) buildConsenterData(org *config.OrdererOrg, orderer *config.N
 	}
 	port := orderer.Port
 	if port == 0 {
-		port = 7050
+		port = config.DefaultOrdererPort(orderer.Type)
 	}
 
 	// Build orderer FQDN

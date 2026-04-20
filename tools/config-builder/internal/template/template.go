@@ -128,15 +128,24 @@ func (e *Engine) generateCommitterConfigs() error {
 	absOutputDir, _ := filepath.Abs(e.outputDir)
 
 	for _, component := range e.config.Committer.Components {
-		// Skip db type - Ansible does not generate config file for database component
-		// Database component only needs data directory, not config file
+		// Skip config file generation for db type. The official Postgres role
+		// does not render a standalone committer config, but it does transfer
+		// TLS material under config/tls when postgres_use_tls is enabled.
 		if component.Type == "db" {
-			// Create data directory for PostgreSQL (will be used by docker-compose)
 			componentDirName := e.config.CommitterComponentDirName(component)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 			dataDir := filepath.Join(componentDir, "data")
 			if err := os.MkdirAll(dataDir, 0750); err != nil {
 				return fmt.Errorf("failed to create committer db data directory: %w", err)
+			}
+			if e.getTLSEnabled() {
+				componentConfigDir := filepath.Join(componentDir, "config")
+				if err := os.MkdirAll(componentConfigDir, 0750); err != nil {
+					return fmt.Errorf("failed to create committer db config directory: %w", err)
+				}
+				if err := e.copyCommitterTLS(&component, componentConfigDir); err != nil {
+					return fmt.Errorf("failed to copy committer db TLS for %s: %w", componentDirName, err)
+				}
 			}
 			e.log("Created data directory for committer: %s (%s)", componentDirName, component.Type)
 			continue
@@ -158,9 +167,7 @@ func (e *Engine) generateCommitterConfigs() error {
 		if err := e.generateCommitterConfig(component.Type, &component, configPath, componentConfigDir); err != nil {
 			return fmt.Errorf("failed to generate config for %s: %w", componentDirName, err)
 		}
-		if (component.Type == "validator" || component.Type == "query-service") && e.config.Committer != nil &&
-			e.config.Committer.Database != nil && e.config.Committer.Database.TLS != nil &&
-			e.config.Committer.Database.TLS.Enabled {
+		if component.Type == "validator" || component.Type == "query-service" {
 			if err := e.copyCommitterDatabaseTLS(componentConfigDir); err != nil {
 				return fmt.Errorf("failed to copy committer database TLS for %s: %w", componentDirName, err)
 			}
@@ -252,10 +259,15 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		return nil, fmt.Errorf("orderer org %q: %w", org.Name, err)
 	}
 
+	listenPort := node.Port
+	if listenPort == 0 {
+		listenPort = config.DefaultOrdererPort(node.Type)
+	}
+
 	// Auto-calculate monitoring port if not specified
 	monPort := node.MonitoringPort
 	if monPort == 0 {
-		monPort = config.DefaultMonitoringPort(node.Port)
+		monPort = config.DefaultMonitoringPort(listenPort)
 	}
 
 	data := &OrdererTemplateData{
@@ -266,7 +278,7 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		CryptoDir:               cryptoDir,
 		GenesisDir:              genesisDir,
 		ListenAddress:           "0.0.0.0",
-		ListenPort:              node.Port,
+		ListenPort:              listenPort,
 		MonitoringListenAddress: "0.0.0.0",
 		MonitoringListenPort:    monPort,
 		MSPID:                   org.Name,
@@ -400,10 +412,14 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 			orgConfig := OrdererOrganizationConfig{Name: org.Name}
 			for _, orderer := range org.Orderers {
 				if orderer.Type == "assembler" {
-					endpoint := fmt.Sprintf("id=%d,deliver,%s:%d", orgIndex+1, dockerHost, orderer.Port)
+					port := orderer.Port
+					if port == 0 {
+						port = config.DefaultOrdererPort(orderer.Type)
+					}
+					endpoint := fmt.Sprintf("id=%d,deliver,%s:%d", orgIndex+1, dockerHost, port)
 					orgConfig.Endpoints = append(orgConfig.Endpoints, endpoint)
 					if ordererTLS {
-						ordererTLSDir := filepath.Join(containerConfigDir, "tls", "orderers", orderer.Name)
+						ordererTLSDir := filepath.Join(containerConfigDir, "tls", "orderers", org.Name, orderer.Name)
 						orgConfig.CACertPaths = append(orgConfig.CACertPaths, filepath.Join(ordererTLSDir, "server.crt"))
 						if data.OrdererTLS == nil {
 							data.OrdererTLS = e.committerClientTLSConfig()
@@ -463,6 +479,10 @@ func (e *Engine) buildCommitterDatabaseConfig(dockerHost string) (*DatabaseConfi
 		if db.LoadBalance != nil {
 			loadBalance = *db.LoadBalance
 		}
+		tablePreSplitTablets := db.TablePreSplitTablets
+		if dbType == "yugabyte" && tablePreSplitTablets == 0 {
+			tablePreSplitTablets = len(db.Endpoints)
+		}
 		cfg := &DatabaseConfig{
 			Type:                 dbType,
 			Endpoints:            make([]string, 0, len(db.Endpoints)),
@@ -470,7 +490,7 @@ func (e *Engine) buildCommitterDatabaseConfig(dockerHost string) (*DatabaseConfi
 			Password:             db.Password,
 			DBName:               db.Database,
 			LoadBalance:          loadBalance,
-			TablePreSplitTablets: db.TablePreSplitTablets,
+			TablePreSplitTablets: tablePreSplitTablets,
 		}
 		for _, endpoint := range db.Endpoints {
 			cfg.Endpoints = append(cfg.Endpoints, fmt.Sprintf("%s:%d", endpoint.Host, endpoint.Port))
@@ -488,14 +508,25 @@ func (e *Engine) buildCommitterDatabaseConfig(dockerHost string) (*DatabaseConfi
 	}
 	for _, comp := range e.config.Committer.Components {
 		if comp.Type == "db" {
-			return &DatabaseConfig{
+			dbPort := comp.Port
+			if dbPort == 0 {
+				dbPort = 5432
+			}
+			cfg := &DatabaseConfig{
 				Type:        "postgres",
-				Endpoints:   []string{fmt.Sprintf("%s:%d", dockerHost, comp.Port)},
+				Endpoints:   []string{fmt.Sprintf("%s:%d", dockerHost, dbPort)},
 				User:        comp.PostgresUser,
 				Password:    comp.PostgresPassword,
 				DBName:      comp.PostgresDB,
 				LoadBalance: false,
-			}, nil
+			}
+			if e.getTLSEnabled() {
+				cfg.TLS = &DatabaseTLSConfig{
+					Mode:       "tls",
+					CACertPath: filepath.Join("/config", "tls", "db", "ca.crt"),
+				}
+			}
+			return cfg, nil
 		}
 	}
 	return nil, fmt.Errorf("committer.use_postgres is enabled but no db component was found")
@@ -515,14 +546,26 @@ func (e *Engine) committerClientTLSConfig(caCertPaths ...string) *CommitterTLSCo
 }
 
 func (e *Engine) copyCommitterDatabaseTLS(componentConfigDir string) error {
-	if e.config.Committer == nil || e.config.Committer.Database == nil ||
-		e.config.Committer.Database.TLS == nil || !e.config.Committer.Database.TLS.Enabled {
+	if e.config.Committer == nil {
 		return nil
 	}
-	return e.copyFile(
-		e.config.Committer.Database.TLS.CACertPath,
-		filepath.Join(componentConfigDir, "tls", "db", "ca.crt"),
-	)
+	if e.config.Committer.Database != nil {
+		if e.config.Committer.Database.TLS == nil || !e.config.Committer.Database.TLS.Enabled {
+			return nil
+		}
+		return e.copyFile(
+			e.config.Committer.Database.TLS.CACertPath,
+			filepath.Join(componentConfigDir, "tls", "db", "ca.crt"),
+		)
+	}
+	if !e.getTLSEnabled() {
+		return nil
+	}
+	dbComponent := e.firstCommitterComponentByType("db")
+	if dbComponent == nil {
+		return nil
+	}
+	return e.copyCommitterCACert(dbComponent, filepath.Join(componentConfigDir, "tls", "db", "ca.crt"))
 }
 
 func (e *Engine) copyCommitterTLS(component *config.CommitterNode, componentConfigDir string) error {
@@ -560,7 +603,7 @@ func (e *Engine) copySidecarClientTLS(componentConfigDir string) error {
 				continue
 			}
 			srcTLS := e.ordererTLSDir(&org, &orderer)
-			dstDir := filepath.Join(componentConfigDir, "tls", "orderers", orderer.Name)
+			dstDir := filepath.Join(componentConfigDir, "tls", "orderers", org.Name, orderer.Name)
 			if err := e.copyFile(filepath.Join(srcTLS, "ca.crt"), filepath.Join(dstDir, "ca.crt")); err != nil {
 				return fmt.Errorf("orderer %s CA: %w", orderer.Name, err)
 			}

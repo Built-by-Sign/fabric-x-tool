@@ -9,7 +9,7 @@ import (
 // FS contains vendored non-Kubernetes config templates aligned with the
 // official Fabric-X Ansible collection, adapted from Jinja to Go templates.
 //
-//go:embed armageddon/*.tmpl committer/*.tmpl committer/sections/*.tmpl crypto/*.tmpl genesis/*.tmpl orderer/*.tmpl orderer/sections/*.tmpl
+//go:embed armageddon/*.tmpl committer/*.tmpl committer/sections/*.tmpl crypto/*.tmpl fabricca/*.tmpl genesis/*.tmpl orderer/*.tmpl orderer/sections/*.tmpl
 var FS embed.FS
 
 // Parse loads a main template and any supporting templates from the embedded FS.

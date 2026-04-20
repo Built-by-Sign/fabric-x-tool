@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"config-builder/internal/config"
+	templatefiles "config-builder/templates"
 
 	"golang.org/x/term"
 )
@@ -32,6 +34,12 @@ type FabricCAGenerator struct {
 type NodeInfo struct {
 	Name    string
 	UserPin string // Per-node PIN for KMS access
+}
+
+type fabricCAClientConfigData struct {
+	Library string
+	Label   string
+	Pin     string
 }
 
 // NewFabricCAGenerator creates a new Fabric CA certificate generator
@@ -1184,9 +1192,7 @@ func (g *FabricCAGenerator) runFabricCAClientEnroll(outputDir, caURL, tokenLabel
 	return g.runFabricCAClientEnrollDocker(outputDir, caURL, tokenLabel, userPin)
 }
 
-// runFabricCAClientEnrollLocal runs fabric-ca-client enroll using local binary
-// This function now uses the same approach as Docker version: envsubst + config template
-// Reference: runFabricCAClientEnrollDocker which uses fabric-ca-client-config.yaml.tpl
+// runFabricCAClientEnrollLocal runs fabric-ca-client enroll using local binary.
 func (g *FabricCAGenerator) runFabricCAClientEnrollLocal(outputDir, caURL, tokenLabel, userPin string) error {
 	// Check if fabric-ca-client is available
 	if _, err := exec.LookPath("fabric-ca-client"); err != nil {
@@ -1207,26 +1213,8 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollLocal(outputDir, caURL, token
 	defer os.RemoveAll(tempDir) // Clean up temp directory
 
 	configPath := filepath.Join(tempDir, "fabric-ca-client-config.yaml")
-
-	// Use envsubst to generate config from template (same as Docker version)
-	// The template file is located at /app/fabric-ca-client-config.yaml.tpl in fabric-x-tool container
-	templatePath := "/app/fabric-ca-client-config.yaml.tpl"
-	envsubstCmd := exec.Command("sh", "-c",
-		fmt.Sprintf("envsubst < %s > %s", templatePath, configPath))
-
-	// Set environment variables for envsubst to substitute
-	envsubstCmd.Env = append(os.Environ(),
-		fmt.Sprintf("SIGN_KMS_ENDPOINT=%s", g.config.KMS.Endpoint),
-		fmt.Sprintf("KMS_TOKEN_LABEL=%s", tokenLabel),
-		fmt.Sprintf("KMS_USER_PIN=%s", userPin),
-		fmt.Sprintf("CA_URL=%s", caURL),
-	)
-
-	g.logDetails("  Generating config from template using envsubst")
-
-	// Execute envsubst to generate config file
-	if output, err := envsubstCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to generate config from template: %w\nOutput: %s", err, string(output))
+	if err := g.writeFabricCAClientConfig(configPath, tokenLabel, userPin); err != nil {
+		return err
 	}
 
 	g.logDetails("  Created config file: %s", configPath)
@@ -1238,9 +1226,11 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollLocal(outputDir, caURL, token
 		"--mspdir", outputDir,
 	)
 
-	// Set working directory to /app so that relative path ./libkms_pkcs11.so works
-	// This matches the Docker version behavior where the working directory is /app
-	cmd.Dir = "/app"
+	// Set working directory to /app when running inside the fabric-x-tool image
+	// so the default relative PKCS11 library path resolves like Docker mode.
+	if _, err := os.Stat("/app"); err == nil {
+		cmd.Dir = "/app"
+	}
 
 	// Set environment variables for KMS (needed by libkms_pkcs11.so)
 	cmd.Env = append(os.Environ(),
@@ -1274,10 +1264,22 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollLocal(outputDir, caURL, token
 
 // runFabricCAClientEnrollDocker runs fabric-ca-client enroll using Docker
 func (g *FabricCAGenerator) runFabricCAClientEnrollDocker(outputDir, caURL, tokenLabel, userPin string) error {
+	tempDir, err := os.MkdirTemp("", "fabric-ca-client-config-*")
+	if err != nil {
+		return fmt.Errorf("failed to create fabric-ca-client config directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configPath := filepath.Join(tempDir, "fabric-ca-client-config.yaml")
+	if err := g.writeFabricCAClientConfig(configPath, tokenLabel, userPin); err != nil {
+		return err
+	}
+
 	args := []string{
 		"run",
 		"--rm",
 		"-v", fmt.Sprintf("%s:/app/msp", outputDir),
+		"-v", fmt.Sprintf("%s:/app/config:ro", tempDir),
 		"-e", fmt.Sprintf("SIGN_KMS_ENDPOINT=%s", g.config.KMS.Endpoint),
 		"-e", fmt.Sprintf("KMS_TOKEN_LABEL=%s", tokenLabel),
 		"-e", fmt.Sprintf("KMS_USER_PIN=%s", userPin),
@@ -1292,9 +1294,8 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollDocker(outputDir, caURL, toke
 	args = append(args,
 		g.toolsImage,
 		"sh", "-c",
-		`envsubst < fabric-ca-client-config.yaml.tpl > fabric-ca-client-config.yaml && \
-./fabric-ca-client enroll \
--c "./fabric-ca-client-config.yaml" \
+		`./fabric-ca-client enroll \
+-c "/app/config/fabric-ca-client-config.yaml" \
 --url "$CA_URL" \
 --mspdir "./msp"`,
 	)
@@ -1312,6 +1313,38 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollDocker(outputDir, caURL, toke
 	}
 
 	return nil
+}
+
+func (g *FabricCAGenerator) writeFabricCAClientConfig(configPath, tokenLabel, userPin string) error {
+	tmpl, err := templatefiles.Parse("fabricca/fabric-ca-client-config.yaml.tmpl", nil)
+	if err != nil {
+		return fmt.Errorf("failed to parse fabric-ca-client config template: %w", err)
+	}
+
+	data := fabricCAClientConfigData{
+		Library: g.fabricCAPKCS11Library(),
+		Label:   tokenLabel,
+		Pin:     userPin,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return fmt.Errorf("failed to render fabric-ca-client config template: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("failed to create fabric-ca-client config directory: %w", err)
+	}
+	if err := os.WriteFile(configPath, buf.Bytes(), 0600); err != nil {
+		return fmt.Errorf("failed to write fabric-ca-client config: %w", err)
+	}
+	return nil
+}
+
+func (g *FabricCAGenerator) fabricCAPKCS11Library() string {
+	if library := os.Getenv("FABRIC_CA_CLIENT_PKCS11_LIBRARY"); library != "" {
+		return library
+	}
+	return "./libkms_pkcs11.so"
 }
 
 // runFabricCAClientEnrollTLS runs fabric-ca-client enroll for TLS (Docker or local)

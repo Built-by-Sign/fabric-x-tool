@@ -329,14 +329,18 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 	}
 
 	// Add port mapping
-	if orderer.Port > 0 {
-		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", orderer.Port, orderer.Port))
+	ordererPort := orderer.Port
+	if ordererPort == 0 {
+		ordererPort = config.DefaultOrdererPort(orderer.Type)
+	}
+	if ordererPort > 0 {
+		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", ordererPort, ordererPort))
 	}
 
 	// Add monitoring port mapping
 	monPort := orderer.MonitoringPort
 	if monPort == 0 {
-		monPort = config.DefaultMonitoringPort(orderer.Port)
+		monPort = config.DefaultMonitoringPort(ordererPort)
 	}
 	if monPort > 0 {
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", monPort, monPort))
@@ -410,11 +414,15 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 	switch component.Type {
 	case "db":
 		// Database component (PostgreSQL)
-		// Ansible mounts: {{ postgres_pgdata_dir }}:/var/lib/postgresql/data:Z
+		// Ansible mounts: {{ postgres_remote_data_dir }}:/var/lib/postgresql/data:Z
 		// Ansible sets: PGDATA: /var/lib/postgresql/data/pgdata
 		service.Image = g.config.Docker.PostgresImage
 		if service.Image == "" {
-			service.Image = "postgres:16"
+			service.Image = "docker.io/library/postgres:16.4"
+		}
+		dbPort := component.Port
+		if dbPort == 0 {
+			dbPort = 5432
 		}
 		service.Environment = append(service.Environment,
 			fmt.Sprintf("POSTGRES_USER=%s", component.PostgresUser),
@@ -422,13 +430,16 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			fmt.Sprintf("POSTGRES_DB=%s", component.PostgresDB),
 			"PGDATA=/var/lib/postgresql/data/pgdata", // Match Ansible configuration
 		)
-		// Database doesn't need a config file command
-		service.Command = nil
-		// PostgreSQL listens on port 5432 inside container by default
-		// Map host port (from config) to container port 5432
-		if component.Port > 0 {
-			service.Ports = append(service.Ports, fmt.Sprintf("%d:5432", component.Port))
+		command := []string{"postgres", "-c", fmt.Sprintf("port=%d", dbPort)}
+		if g.config.TLS != nil && g.config.TLS.Enabled {
+			command = append(command,
+				"-c", "ssl=on",
+				"-c", "ssl_key_file=/var/lib/postgresql/config/tls/server.key",
+				"-c", "ssl_cert_file=/var/lib/postgresql/config/tls/server.crt",
+			)
 		}
+		service.Command = command
+		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", dbPort, dbPort))
 		// Mount the generated local deployment data directory, matching the
 		// non-Kubernetes Ansible layout where PostgreSQL persists under the
 		// component's local deployment tree.
@@ -436,11 +447,16 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		service.Volumes = append(service.Volumes,
 			fmt.Sprintf("%s:/var/lib/postgresql/data", normalizePathForDockerCompose(dataDir)),
 		)
+		if g.config.TLS != nil && g.config.TLS.Enabled {
+			service.Volumes = append(service.Volumes,
+				fmt.Sprintf("%s:/var/lib/postgresql/config:ro", normalizePathForDockerCompose(configDir)),
+			)
+		}
 		// PostgreSQL container should not have working_dir set (Ansible doesn't set it)
 		service.WorkingDir = ""
 		// Add healthcheck for PostgreSQL
 		service.HealthCheck = &HealthCheck{
-			Test:        []string{"CMD-SHELL", fmt.Sprintf("pg_isready -U %s -d %s", component.PostgresUser, component.PostgresDB)},
+			Test:        []string{"CMD-SHELL", fmt.Sprintf("pg_isready -U %s -d %s -p %d", component.PostgresUser, component.PostgresDB, dbPort)},
 			Interval:    "10s",
 			Timeout:     "5s",
 			Retries:     5,

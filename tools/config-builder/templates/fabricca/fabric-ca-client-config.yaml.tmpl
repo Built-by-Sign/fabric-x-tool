@@ -1,0 +1,11 @@
+# Local vendored copy of the Fabric CA client KMS BCCSP template used by the
+# fabric-x-tool image at /app/fabric-ca-client-config.yaml.tpl.
+# Adapted from envsubst placeholders to Go text/template.
+bccsp:
+  default: PKCS11
+  pkcs11:
+    Library: {{ .Library }}
+    Label: {{ .Label }}
+    Pin: {{ .Pin }}
+    Hash: SHA2
+    Security: 256

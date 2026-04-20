@@ -163,6 +163,22 @@ func DefaultMonitoringPort(servicePort int) int {
 	return 0
 }
 
+// DefaultOrdererPort returns the default service port for an orderer component.
+func DefaultOrdererPort(ordererType string) int {
+	switch ordererType {
+	case "router":
+		return 7050
+	case "batcher":
+		return 7051
+	case "consenter":
+		return 7052
+	case "assembler":
+		return 7053
+	default:
+		return 0
+	}
+}
+
 // CommitterComponentDirName returns the local-deployment directory for a
 // committer component. A single component of a type keeps the Ansible-style
 // committer-<type> directory. Multiple instances of the same type need unique
@@ -196,7 +212,7 @@ func DefaultConfig() *NetworkConfig {
 			NetworkDriver: "bridge",
 			OrdererImage:  "hyperledger/fabric-x-orderer:local",
 			ToolsImage:    "docker.io/hyperledger/fabric-x-tools:0.0.4", // Match Ansible default
-			PostgresImage: "postgres:16",
+			PostgresImage: "docker.io/library/postgres:16.4",
 		},
 	}
 }

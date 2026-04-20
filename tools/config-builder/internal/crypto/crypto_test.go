@@ -59,13 +59,10 @@ func TestBuildCryptoConfigAddsCommitterTLSIdentitiesWhenTLSEnabled(t *testing.T)
 	for _, spec := range cc.PeerOrgs[0].Specs {
 		got[spec.Hostname] = true
 	}
-	for _, want := range []string{"validator", "verifier", "committer-sidecar"} {
+	for _, want := range []string{"db", "validator", "verifier", "committer-sidecar"} {
 		if !got[want] {
 			t.Fatalf("expected %s peer spec, got %#v", want, cc.PeerOrgs[0].Specs)
 		}
-	}
-	if got["db"] {
-		t.Fatalf("did not expect db peer spec, got %#v", cc.PeerOrgs[0].Specs)
 	}
 }
 
@@ -119,7 +116,32 @@ func TestGenerateCryptoConfigUsesVendoredTemplate(t *testing.T) {
 			t.Fatalf("crypto-config missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Hostname: db") {
-		t.Fatalf("crypto-config should not include db identity:\n%s", rendered)
+}
+
+func TestBuildCryptoConfigSkipsCommitterDBIdentityWhenTLSDisabled(t *testing.T) {
+	cfg := &config.NetworkConfig{
+		PeerOrgs: []config.PeerOrg{{
+			Name:   "Org1",
+			Domain: "org1.example.com",
+			Peers:  []config.Node{{Name: "peer0"}},
+		}},
+		Committer: &config.CommitterConfig{
+			Components: []config.CommitterNode{
+				{Name: "db", Type: "db"},
+				{Name: "committer-sidecar", Type: "sidecar"},
+			},
+		},
+	}
+
+	cc := NewGenerator(cfg, t.TempDir(), false).buildCryptoConfig()
+	got := make(map[string]bool)
+	for _, spec := range cc.PeerOrgs[0].Specs {
+		got[spec.Hostname] = true
+	}
+	if got["db"] {
+		t.Fatalf("did not expect db peer spec without TLS, got %#v", cc.PeerOrgs[0].Specs)
+	}
+	if !got["committer-sidecar"] {
+		t.Fatalf("expected sidecar peer spec without TLS, got %#v", cc.PeerOrgs[0].Specs)
 	}
 }

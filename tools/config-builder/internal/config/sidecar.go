@@ -105,7 +105,7 @@ func (c *NetworkConfig) ResolveCommitterCryptoIdentitiesByOrg() (map[string][]st
 	}
 	seen := make(map[string]map[string]struct{})
 	for _, component := range c.Committer.Components {
-		if component.Type == "db" {
+		if component.Type == "db" && (c.TLS == nil || !c.TLS.Enabled) {
 			continue
 		}
 		org, identityName, err := c.ResolveCommitterCryptoIdentity(component.Name, component.Type)

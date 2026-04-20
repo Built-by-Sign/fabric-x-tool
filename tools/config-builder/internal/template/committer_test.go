@@ -179,14 +179,89 @@ func TestCommitterTemplatesRenderTLSSections(t *testing.T) {
 	sidecarRendered := sidecarOut.String()
 	for _, want := range []string{
 		"common-ca-cert-paths:",
-		"- /config/tls/orderers/assembler1/ca.crt",
-		"- /config/tls/orderers/assembler1/server.crt",
+		"- /config/tls/orderers/OrdererOrg1/assembler1/ca.crt",
+		"- /config/tls/orderers/OrdererOrg1/assembler1/server.crt",
 		"endpoint: host.docker.internal:5120",
 		"- /config/tls/coordinator/ca.crt",
 	} {
 		if !strings.Contains(sidecarRendered, want) {
 			t.Fatalf("sidecar TLS config missing %q:\n%s", want, sidecarRendered)
 		}
+	}
+}
+
+func TestSidecarTLSPathsAreUniqueAcrossOrdererOrganizations(t *testing.T) {
+	cfg := &config.NetworkConfig{
+		ChannelID: "arma",
+		TLS:       &config.TLSConfig{Enabled: true},
+		PeerOrgs:  []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}},
+		OrdererOrgs: []config.OrdererOrg{
+			{
+				Name: "OrdererOrg1",
+				Orderers: []config.Node{{
+					Name: "assembler0",
+					Type: "assembler",
+					Port: 7053,
+				}},
+			},
+			{
+				Name: "OrdererOrg2",
+				Orderers: []config.Node{{
+					Name: "assembler0",
+					Type: "assembler",
+					Port: 8053,
+				}},
+			},
+		},
+		Committer: &config.CommitterConfig{
+			Components: []config.CommitterNode{{Name: "committer-sidecar", Type: "sidecar", Port: 5130}},
+		},
+	}
+	engine := NewEngine(cfg, t.TempDir(), false)
+
+	data, err := engine.buildCommitterTemplateData("sidecar", &cfg.Committer.Components[0], t.TempDir())
+	if err != nil {
+		t.Fatalf("build sidecar data: %v", err)
+	}
+	rendered := mustRenderCommitterTemplate(t, engine, "sidecar", data)
+
+	for _, want := range []string{
+		"- /config/tls/orderers/OrdererOrg1/assembler0/server.crt",
+		"- /config/tls/orderers/OrdererOrg2/assembler0/server.crt",
+		"- /config/tls/orderers/OrdererOrg1/assembler0/ca.crt",
+		"- /config/tls/orderers/OrdererOrg2/assembler0/ca.crt",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidecar TLS config missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestSidecarOrdererEndpointUsesAssemblerDefaultPort(t *testing.T) {
+	cfg := &config.NetworkConfig{
+		ChannelID: "arma",
+		PeerOrgs:  []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}},
+		OrdererOrgs: []config.OrdererOrg{{
+			Name: "OrdererOrg1",
+			Orderers: []config.Node{{
+				Name: "assembler0",
+				Type: "assembler",
+			}},
+		}},
+		Committer: &config.CommitterConfig{
+			Components: []config.CommitterNode{{Name: "committer-sidecar", Type: "sidecar", Port: 5130}},
+		},
+	}
+	engine := NewEngine(cfg, t.TempDir(), false)
+
+	data, err := engine.buildCommitterTemplateData("sidecar", &cfg.Committer.Components[0], t.TempDir())
+	if err != nil {
+		t.Fatalf("build sidecar data: %v", err)
+	}
+	rendered := mustRenderCommitterTemplate(t, engine, "sidecar", data)
+
+	if !strings.Contains(rendered, "- id=1,deliver,host.docker.internal:7053") {
+		t.Fatalf("expected default assembler deliver port in sidecar config:\n%s", rendered)
 	}
 }
 
@@ -218,6 +293,111 @@ func TestCopyCommitterDatabaseTLSCopiesCACert(t *testing.T) {
 		t.Fatalf("read copied CA: %v", err)
 	}
 	if string(got) != "db-ca" {
+		t.Fatalf("unexpected copied CA contents: %q", string(got))
+	}
+}
+
+func TestLocalPostgresDatabaseConfigUsesTLSCA(t *testing.T) {
+	cfg := &config.NetworkConfig{
+		TLS: &config.TLSConfig{Enabled: true},
+		Committer: &config.CommitterConfig{
+			UsePostgres: true,
+			Components: []config.CommitterNode{
+				{Name: "db", Type: "db", Port: 15432, PostgresUser: "postgres", PostgresPassword: "secret", PostgresDB: "fxdb"},
+				{Name: "validator", Type: "validator", Port: 5100},
+			},
+		},
+	}
+	engine := NewEngine(cfg, t.TempDir(), false)
+
+	data, err := engine.buildCommitterTemplateData("validator", &cfg.Committer.Components[1], t.TempDir())
+	if err != nil {
+		t.Fatalf("build validator data: %v", err)
+	}
+	rendered := mustRenderCommitterTemplate(t, engine, "validator", data)
+
+	for _, want := range []string{
+		"- host.docker.internal:15432",
+		"mode: tls",
+		"ca-cert-path: /config/tls/db/ca.crt",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected local postgres TLS database config to contain %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestExternalYugabyteDatabaseDefaultsTablePreSplitToEndpointCount(t *testing.T) {
+	cfg := &config.NetworkConfig{
+		Committer: &config.CommitterConfig{
+			Database: &config.CommitterDatabase{
+				Type: "yugabyte",
+				Endpoints: []config.DatabaseEndpoint{
+					{Host: "yb-1.example.com", Port: 5433},
+					{Host: "yb-2.example.com", Port: 5433},
+					{Host: "yb-3.example.com", Port: 5433},
+				},
+				Username: "fx",
+				Password: "secret",
+				Database: "fxdb",
+			},
+			Components: []config.CommitterNode{{Name: "validator", Type: "validator", Port: 5100}},
+		},
+	}
+	engine := NewEngine(cfg, t.TempDir(), false)
+
+	data, err := engine.buildCommitterTemplateData("validator", &cfg.Committer.Components[0], t.TempDir())
+	if err != nil {
+		t.Fatalf("build validator data: %v", err)
+	}
+	rendered := mustRenderCommitterTemplate(t, engine, "validator", data)
+
+	for _, want := range []string{
+		"load-balance: true",
+		"table-pre-split-tablets: 3",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected external yugabyte config to contain %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestCopyCommitterDatabaseTLSCopiesLocalPostgresCACert(t *testing.T) {
+	outputDir := t.TempDir()
+	dbTLSDir := filepath.Join(
+		outputDir,
+		"build", "config", "cryptogen-artifacts", "crypto",
+		"peerOrganizations", "org1.example.com", "peers", "db.org1.example.com", "tls",
+	)
+	if err := os.MkdirAll(dbTLSDir, 0750); err != nil {
+		t.Fatalf("create db TLS dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dbTLSDir, "ca.crt"), []byte("local-db-ca"), 0644); err != nil {
+		t.Fatalf("write db CA: %v", err)
+	}
+
+	engine := NewEngine(&config.NetworkConfig{
+		TLS:      &config.TLSConfig{Enabled: true},
+		PeerOrgs: []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}},
+		Committer: &config.CommitterConfig{
+			UsePostgres: true,
+			Components: []config.CommitterNode{
+				{Name: "db", Type: "db"},
+				{Name: "validator", Type: "validator"},
+			},
+		},
+	}, outputDir, false)
+
+	dstDir := t.TempDir()
+	if err := engine.copyCommitterDatabaseTLS(dstDir); err != nil {
+		t.Fatalf("copyCommitterDatabaseTLS: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dstDir, "tls", "db", "ca.crt"))
+	if err != nil {
+		t.Fatalf("read copied CA: %v", err)
+	}
+	if string(got) != "local-db-ca" {
 		t.Fatalf("unexpected copied CA contents: %q", string(got))
 	}
 }

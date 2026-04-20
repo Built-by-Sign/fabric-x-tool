@@ -151,13 +151,13 @@ func (g *Generator) getOrdererEndpoints(org *config.OrdererOrg, partyID int) []s
 		if orderer.Type == "router" {
 			port := orderer.Port
 			if port == 0 {
-				port = 7050
+				port = config.DefaultOrdererPort(orderer.Type)
 			}
 			endpoints = append(endpoints, fmt.Sprintf("id=%d,broadcast,%s:%d", partyID, host, port))
 		} else if orderer.Type == "assembler" {
 			port := orderer.Port
 			if port == 0 {
-				port = 7053
+				port = config.DefaultOrdererPort(orderer.Type)
 			}
 			endpoints = append(endpoints, fmt.Sprintf("id=%d,deliver,%s:%d", partyID, host, port))
 		}
