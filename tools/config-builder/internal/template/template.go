@@ -177,58 +177,52 @@ func (e *Engine) generateCommitterConfigs() error {
 
 // generateOrdererConfig generates a configuration file for an orderer node
 func (e *Engine) generateOrdererConfig(ordererType string, org *config.OrdererOrg, node *config.Node, configPath, configDir, cryptoDir, genesisDir string, partyID int) error {
-	// Build template data (pass partyID)
-	data := e.buildOrdererTemplateData(ordererType, org, node, configDir, cryptoDir, genesisDir, partyID)
+	data, err := e.buildOrdererTemplateData(ordererType, org, node, configDir, cryptoDir, genesisDir, partyID)
+	if err != nil {
+		return err
+	}
 
-	// Get template based on orderer type
 	tmpl, err := e.getOrdererTemplate(ordererType)
 	if err != nil {
 		return err
 	}
 
-	// Execute template
 	return e.executeTemplate(tmpl, data, configPath)
 }
 
 // generateCommitterConfig generates a configuration file for a committer component
 func (e *Engine) generateCommitterConfig(componentType string, component *config.CommitterNode, configPath, configDir string) error {
-	// Build template data
-	data := e.buildCommitterTemplateData(componentType, component, configDir)
+	data, err := e.buildCommitterTemplateData(componentType, component, configDir)
+	if err != nil {
+		return err
+	}
 
-	// Get template based on component type
 	tmpl, err := e.getCommitterTemplate(componentType)
 	if err != nil {
 		return err
 	}
 
-	// Execute template
 	return e.executeTemplate(tmpl, data, configPath)
 }
 
 // buildOrdererTemplateData builds template data for orderer nodes
-func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.OrdererOrg, node *config.Node, configDir, cryptoDir, genesisDir string, partyID int) *OrdererTemplateData {
+func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.OrdererOrg, node *config.Node, configDir, cryptoDir, genesisDir string, partyID int) (*OrdererTemplateData, error) {
 	// Use container path for configDir (matches Ansible's orderer_docker_config_dir = "/config")
 	// The configDir parameter is the host path, but we need container paths in the config file
 	containerConfigDir := "/config"
 
-	// Generate BCCSP configuration based on KMS settings
-	var bccsConfig *bccsp.BCCSPConfig
-	if e.config.KMS != nil && e.config.KMS.Enabled {
-		// KMS mode: use KMS PKCS11 library with organization-level PIN
-		// Priority: org.KMSUserPin > node.UserPin (backward compatibility)
-		orgPin := org.KMSUserPin
-		if orgPin == "" {
-			orgPin = node.UserPin // Backward compatibility
+	bccsConfig, err := e.buildBCCSPConfig(org.KMSTokenLabel, func() (string, error) {
+		pin, err := org.ResolveKMSUserPin()
+		if err != nil {
+			return "", err
 		}
-		// KMS mode: use unified token label from KMS config, not org-specific label
-		tokenLabel := e.config.KMS.TokenLabel
-		if tokenLabel == "" {
-			tokenLabel = "tk" // Default KMS token label
+		if node.UserPin != "" {
+			return node.UserPin, nil
 		}
-		bccsConfig = bccsp.GenerateKMSConfig(e.config.KMS.Endpoint, tokenLabel, orgPin)
-	} else {
-		// Software mode
-		bccsConfig = bccsp.GenerateSoftwareConfig()
+		return pin, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("orderer org %q: %w", org.Name, err)
 	}
 
 	// Auto-calculate monitoring port if not specified
@@ -260,7 +254,25 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		},
 	}
 
-	return data
+	return data, nil
+}
+
+// buildBCCSPConfig returns a BCCSP config honoring KMS.Enabled.
+// When KMS is enabled, resolvePin is invoked to get the per-identity PIN;
+// otherwise the software provider is returned.
+func (e *Engine) buildBCCSPConfig(orgTokenLabel string, resolvePin func() (string, error)) (*bccsp.BCCSPConfig, error) {
+	if e.config.KMS == nil || !e.config.KMS.Enabled {
+		return bccsp.GenerateSoftwareConfig(), nil
+	}
+	pin, err := resolvePin()
+	if err != nil {
+		return nil, err
+	}
+	tokenLabel, err := e.config.ResolveKMSTokenLabel(orgTokenLabel)
+	if err != nil {
+		return nil, err
+	}
+	return bccsp.GenerateKMSConfig(e.config.KMS.Endpoint, tokenLabel, pin), nil
 }
 
 // monitoringPort returns the monitoring port for a committer component,
@@ -273,7 +285,7 @@ func monitoringPort(c *config.CommitterNode) int {
 }
 
 // buildCommitterTemplateData builds template data for committer components
-func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) *CommitterTemplateData {
+func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) (*CommitterTemplateData, error) {
 	// Use container path for configDir (matches Ansible's committer_docker_config_dir = "/config")
 	containerConfigDir := "/config"
 
@@ -326,10 +338,17 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		// Populate MSP identity for orderer deliver authorization (v0.1.9+).
 		// Uses the first peer org's channel_admin user, which is the same identity
 		// fxconfig uses for namespace operations (always present as a channel admin).
+		// MSP ID must match what genesis emits (<stripped>MSP).
 		if len(e.config.PeerOrgs) > 0 {
-			org := e.config.PeerOrgs[0]
-			data.SidecarIdentityMSPID = org.Name
+			org := &e.config.PeerOrgs[0]
+			data.SidecarIdentityMSPID = config.DeriveMSPID(org.Name)
 			data.SidecarIdentityMSPDir = "/msp/channel_admin"
+
+			bccspCfg, err := e.buildBCCSPConfig(org.KMSTokenLabel, org.ResolveKMSUserPin)
+			if err != nil {
+				return nil, fmt.Errorf("sidecar identity for peer org %q: %w", org.Name, err)
+			}
+			data.SidecarIdentityBCCSP = bccspCfg
 		}
 
 		// Collect all orderer assembler endpoints
@@ -379,7 +398,7 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		}
 	}
 
-	return data
+	return data, nil
 }
 
 // Helper functions

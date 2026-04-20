@@ -101,8 +101,6 @@ func (r *Runner) loadConfig() error {
 		r.log("Using Docker mode (tools will be executed in containers)")
 	}
 
-	// Configuration validation is done during Load()
-
 	r.config = cfg
 	r.logDetails("Configuration loaded successfully")
 	r.logDetails("  Channel ID: %s", cfg.ChannelID)

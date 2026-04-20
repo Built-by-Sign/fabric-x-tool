@@ -115,29 +115,28 @@ func (g *FabricCAGenerator) Generate() error {
 func (g *FabricCAGenerator) GenerateOrdererOrgCrypto(org config.OrdererOrg) error {
 	g.log("Generating crypto for orderer org: %s", org.Name)
 
-	// Determine organization-level user PIN
-	// Priority: org.KMSUserPin (new) > node.UserPin (old, for backward compatibility)
-	orgUserPin := org.KMSUserPin
+	orgUserPin, err := org.ResolveKMSUserPin()
+	if err != nil {
+		return err
+	}
 
-	// Convert orderer nodes to NodeInfo
 	nodes := make([]NodeInfo, len(org.Orderers))
 	for i, orderer := range org.Orderers {
-		// Use org-level PIN if available, otherwise use node-level PIN for backward compatibility
 		userPin := orgUserPin
-		if userPin == "" {
+		if orderer.UserPin != "" {
 			userPin = orderer.UserPin
 		}
-
 		nodes[i] = NodeInfo{
 			Name:    orderer.Name,
 			UserPin: userPin,
 		}
 	}
 
-	// Determine token label for this org
-	tokenLabel := g.getTokenLabel(org.Name, org.KMSTokenLabel)
+	tokenLabel, err := g.config.ResolveKMSTokenLabel(org.KMSTokenLabel)
+	if err != nil {
+		return err
+	}
 
-	// Generate crypto materials for the organization
 	return g.GenerateOrgCrypto(org.Name, org.Domain, g.config.KMS.CAURL, tokenLabel, nodes, "orderer")
 }
 
@@ -145,29 +144,28 @@ func (g *FabricCAGenerator) GenerateOrdererOrgCrypto(org config.OrdererOrg) erro
 func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 	g.log("Generating crypto for peer org: %s", org.Name)
 
-	// Determine organization-level user PIN
-	// Priority: org.KMSUserPin (new) > node.UserPin (old, for backward compatibility)
-	orgUserPin := org.KMSUserPin
+	orgUserPin, err := org.ResolveKMSUserPin()
+	if err != nil {
+		return err
+	}
 
-	// Convert peer nodes to NodeInfo
 	nodes := make([]NodeInfo, len(org.Peers))
 	for i, peer := range org.Peers {
-		// Use org-level PIN if available, otherwise use node-level PIN for backward compatibility
 		userPin := orgUserPin
-		if userPin == "" {
+		if peer.UserPin != "" {
 			userPin = peer.UserPin
 		}
-
 		nodes[i] = NodeInfo{
 			Name:    peer.Name,
 			UserPin: userPin,
 		}
 	}
 
-	// Determine token label for this org
-	tokenLabel := g.getTokenLabel(org.Name, org.KMSTokenLabel)
+	tokenLabel, err := g.config.ResolveKMSTokenLabel(org.KMSTokenLabel)
+	if err != nil {
+		return err
+	}
 
-	// Generate crypto materials for peer nodes
 	if err := g.GenerateOrgCrypto(org.Name, org.Domain, g.config.KMS.CAURL, tokenLabel, nodes, "peer"); err != nil {
 		return err
 	}
@@ -177,7 +175,6 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 		g.log("Generating crypto for %d users in peer org: %s (concurrent mode with max %d workers)",
 			len(org.Users), org.Name, g.maxConcurrency)
 
-		// Get absolute output directory
 		absOutputDir, err := filepath.Abs(g.outputDir)
 		if err != nil {
 			return fmt.Errorf("failed to get absolute output path: %w", err)
@@ -185,20 +182,16 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 
 		cryptoDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts", "crypto")
 
-		// Use first peer's PIN as default for users if not specified
-		defaultUserPin := "1234567"
-		if len(nodes) > 0 && nodes[0].UserPin != "" {
-			defaultUserPin = nodes[0].UserPin
-		}
+		// Users inherit the org-level PIN (the same token holds both node and
+		// user keys). Per-user PIN overrides are not currently supported.
+		defaultUserPin := orgUserPin
 
-		// Cache CA certificates to avoid repeated reads
 		orgMSPDir := filepath.Join(cryptoDir, "peerOrganizations", org.Domain, "msp")
 		caCertData, tlsCACertData, err := g.readOrgCACerts(orgMSPDir)
 		if err != nil {
 			g.logDetails("Warning: Could not pre-read CA certificates: %v (will read per-user)", err)
 		}
 
-		// Generate certificates for each user concurrently
 		if err := g.generateUsersParallel(org.Domain, g.config.KMS.CAURL, tokenLabel,
 			defaultUserPin, org.Users, cryptoDir, caCertData, tlsCACertData); err != nil {
 			return err
@@ -278,11 +271,10 @@ func (g *FabricCAGenerator) generateNodeCrypto(orgName, domain, caURL, tokenLabe
 		return fmt.Errorf("failed to create node directory: %w", err)
 	}
 
-	// Use node-specific PIN if provided, otherwise use default
-	userPin := node.UserPin
-	if userPin == "" {
-		userPin = "1234" // Default PIN
+	if node.UserPin == "" {
+		return fmt.Errorf("node %s.%s: kms user pin is empty", node.Name, domain)
 	}
+	userPin := node.UserPin
 
 	// Run fabric-ca-client enroll (Docker or local)
 	if err := g.runFabricCAClientEnroll(nodeDir, caURL, tokenLabel, userPin); err != nil {
@@ -525,11 +517,10 @@ func (g *FabricCAGenerator) GenerateAdminUser(domain, caURL, tokenLabel string, 
 		return fmt.Errorf("failed to create admin directory: %w", err)
 	}
 
-	// Use admin-specific PIN if provided, otherwise use default
-	userPin := admin.UserPin
-	if userPin == "" {
-		userPin = "1234" // Default PIN
+	if admin.UserPin == "" {
+		return fmt.Errorf("admin user @%s: kms user pin is empty", domain)
 	}
+	userPin := admin.UserPin
 
 	// Run fabric-ca-client enroll for Admin (Docker or local)
 	if err := g.runFabricCAClientEnroll(adminDir, caURL, tokenLabel, userPin); err != nil {
@@ -555,140 +546,6 @@ func (g *FabricCAGenerator) GenerateAdminUser(domain, caURL, tokenLabel string, 
 	}
 
 	g.logDetails("  Successfully generated Admin user for domain: %s", domain)
-	return nil
-}
-
-// GeneratePeerUser generates user certificates for peer organization using KMS
-// Creates users/{username}@{domain}/msp/ directory structure
-func (g *FabricCAGenerator) GeneratePeerUser(domain, caURL, tokenLabel string, user NodeInfo, cryptoDir string) error {
-	g.logDetails("  Generating user certificate for: %s@%s", user.Name, domain)
-
-	// Create user directory: users/{username}@{domain}/msp
-	userDir := filepath.Join(cryptoDir, "peerOrganizations", domain, "users", fmt.Sprintf("%s@%s", user.Name, domain), "msp")
-	if err := os.MkdirAll(userDir, 0755); err != nil {
-		return fmt.Errorf("failed to create user directory: %w", err)
-	}
-
-	// Use user-specific PIN if provided, otherwise use default
-	userPin := user.UserPin
-	if userPin == "" {
-		userPin = "1234567" // Default PIN
-	}
-
-	// Run fabric-ca-client enroll for user (Docker or local)
-	if err := g.runFabricCAClientEnroll(userDir, caURL, tokenLabel, userPin); err != nil {
-		return fmt.Errorf("fabric-ca-client enroll failed for user %s: %w", user.Name, err)
-	}
-
-	g.logProgress("Generated user certificate for %s@%s", user.Name, domain)
-
-	// Rename signcerts/cert.pem to signcerts/{username}@{domain}-cert.pem
-	// This matches cryptogen's naming convention
-	signcertsDir := filepath.Join(userDir, "signcerts")
-	srcCertPath := filepath.Join(signcertsDir, "cert.pem")
-	userFQDN := fmt.Sprintf("%s@%s", user.Name, domain)
-	dstCertPath := filepath.Join(signcertsDir, fmt.Sprintf("%s-cert.pem", userFQDN))
-
-	if _, err := os.Stat(srcCertPath); err == nil {
-		if err := os.Rename(srcCertPath, dstCertPath); err != nil {
-			return fmt.Errorf("failed to rename certificate: %w", err)
-		}
-		g.logDetails("  Renamed certificate: %s -> %s", srcCertPath, dstCertPath)
-	}
-
-	// Rename cacerts CA certificate to standard format: ca.{domain}-cert.pem
-	cacertsDir := filepath.Join(userDir, "cacerts")
-	if entries, err := os.ReadDir(cacertsDir); err == nil && len(entries) > 0 {
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".pem") {
-				srcCACertPath := filepath.Join(cacertsDir, entry.Name())
-				dstCACertPath := filepath.Join(cacertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
-				if entry.Name() != fmt.Sprintf("ca.%s-cert.pem", domain) {
-					if err := os.Rename(srcCACertPath, dstCACertPath); err != nil {
-						return fmt.Errorf("failed to rename CA certificate: %w", err)
-					}
-					g.logDetails("  Renamed CA certificate: %s -> %s", entry.Name(), fmt.Sprintf("ca.%s-cert.pem", domain))
-				}
-				break
-			}
-		}
-	}
-
-	// Create admincerts directory and copy the user certificate
-	// This is required by cryptogen-style MSP structure
-	admincertsDir := filepath.Join(userDir, "admincerts")
-	if err := os.MkdirAll(admincertsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create admincerts directory: %w", err)
-	}
-
-	adminCertPath := filepath.Join(admincertsDir, fmt.Sprintf("%s-cert.pem", userFQDN))
-	if err := g.copyFile(dstCertPath, adminCertPath); err != nil {
-		return fmt.Errorf("failed to copy certificate to admincerts: %w", err)
-	}
-	g.logDetails("  Created admincerts: %s", adminCertPath)
-
-	// Copy CA certificate from org-level MSP to user's MSP
-	// This is required for MSP validation
-	orgMSPDir := filepath.Join(cryptoDir, "peerOrganizations", domain, "msp")
-	orgCACertsDir := filepath.Join(orgMSPDir, "cacerts")
-	userCACertsDir := filepath.Join(userDir, "cacerts")
-
-	// Ensure user's cacerts directory exists
-	if err := os.MkdirAll(userCACertsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create user cacerts directory: %w", err)
-	}
-
-	// Find and copy CA certificate
-	caCertFiles, err := os.ReadDir(orgCACertsDir)
-	if err != nil {
-		return fmt.Errorf("failed to read org cacerts directory: %w", err)
-	}
-
-	if len(caCertFiles) > 0 {
-		srcCACert := filepath.Join(orgCACertsDir, caCertFiles[0].Name())
-		dstCACert := filepath.Join(userCACertsDir, caCertFiles[0].Name())
-		if err := g.copyFile(srcCACert, dstCACert); err != nil {
-			return fmt.Errorf("failed to copy CA certificate to user MSP: %w", err)
-		}
-		g.logDetails("  Copied CA certificate to user MSP: %s", dstCACert)
-	}
-
-	// Copy TLS CA certificate from org-level MSP
-	orgTLSCACertsDir := filepath.Join(orgMSPDir, "tlscacerts")
-	userTLSCACertsDir := filepath.Join(userDir, "tlscacerts")
-
-	if err := os.MkdirAll(userTLSCACertsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create user tlscacerts directory: %w", err)
-	}
-
-	// Find and copy TLS CA certificate
-	tlsCACertFiles, err := os.ReadDir(orgTLSCACertsDir)
-	if err == nil && len(tlsCACertFiles) > 0 {
-		srcTLSCACert := filepath.Join(orgTLSCACertsDir, tlsCACertFiles[0].Name())
-		dstTLSCACert := filepath.Join(userTLSCACertsDir, tlsCACertFiles[0].Name())
-		if err := g.copyFile(srcTLSCACert, dstTLSCACert); err != nil {
-			return fmt.Errorf("failed to copy TLS CA certificate: %w", err)
-		}
-		g.logDetails("  Copied TLS CA certificate: %s", dstTLSCACert)
-	}
-
-	// WORKAROUND: Create priv_sk marker file for user as well
-	keystoreDir := filepath.Join(userDir, "keystore")
-	privSkPath := filepath.Join(keystoreDir, "priv_sk")
-	markerContent := []byte("# This is a marker file for PKCS11 mode\n# Actual private key is stored in KMS\n# SKI will be derived from the certificate\n")
-	if err := os.WriteFile(privSkPath, markerContent, 0600); err != nil {
-		return fmt.Errorf("failed to create priv_sk marker file for user: %w", err)
-	}
-
-	g.logDetails("  Created priv_sk marker file for user: %s", user.Name)
-
-	// Generate config.yaml for the user's MSP directory
-	// This is required for NodeOUs support to identify admin roles
-	if err := g.generateMSPConfig(userDir, domain); err != nil {
-		return fmt.Errorf("failed to generate MSP config for user: %w", err)
-	}
-
-	g.logDetails("  Successfully generated certificate for user: %s@%s", user.Name, domain)
 	return nil
 }
 
@@ -721,17 +578,6 @@ func (g *FabricCAGenerator) generateMSPConfig(mspDir, domain string) error {
 
 	g.logDetails("  Generated MSP config.yaml: %s", configPath)
 	return nil
-}
-
-// getTokenLabel returns the token label for an organization
-func (g *FabricCAGenerator) getTokenLabel(orgName, customLabel string) string {
-	if customLabel != "" {
-		return customLabel
-	}
-	if g.config.KMS != nil && g.config.KMS.TokenLabel != "" {
-		return g.config.KMS.TokenLabel
-	}
-	return "FabricToken"
 }
 
 // createOrgMSP creates organization-level MSP directory structure
@@ -1056,7 +902,7 @@ func (g *FabricCAGenerator) generateUsersParallel(domain, caURL, tokenLabel, def
 	return nil
 }
 
-// generatePeerUserOptimized is an optimized version of GeneratePeerUser that uses cached CA certificates
+// generatePeerUserOptimized enrolls a peer user via fabric-ca using cached CA certificates
 func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel string, user NodeInfo,
 	cryptoDir string, caCertData, tlsCACertData []byte) error {
 
@@ -1068,11 +914,10 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 		return fmt.Errorf("failed to create user directory: %w", err)
 	}
 
-	// Use user-specific PIN if provided, otherwise use default
-	userPin := user.UserPin
-	if userPin == "" {
-		userPin = "1234567" // Default PIN
+	if user.UserPin == "" {
+		return fmt.Errorf("user %s@%s: kms user pin is empty", user.Name, domain)
 	}
+	userPin := user.UserPin
 
 	// Run fabric-ca-client enroll for user (Docker or local)
 	if err := g.runFabricCAClientEnroll(userDir, caURL, tokenLabel, userPin); err != nil {

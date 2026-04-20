@@ -3,6 +3,8 @@ package template
 import (
 	"fmt"
 	"text/template"
+
+	"config-builder/internal/bccsp"
 )
 
 // EndpointConfig holds endpoint configuration (host:port)
@@ -33,6 +35,7 @@ type CommitterTemplateData struct {
 	// the unsigned deliver request with FORBIDDEN.
 	SidecarIdentityMSPID  string
 	SidecarIdentityMSPDir string
+	SidecarIdentityBCCSP  *bccsp.BCCSPConfig
 }
 
 // DatabaseConfig holds database configuration
@@ -241,21 +244,26 @@ orderer:
 {{- end }}
   # v0.1.9+ requires signer identity for orderer deliver requests (otherwise FORBIDDEN).
   # Organizations are auto-discovered from the bootstrap config block.
-  # BCCSP is wired to PKCS11 because the MSP private key (priv_sk is a marker file)
-  # actually lives in the KMS. Label/Pin are left blank here and overridden at runtime
-  # via the SC_SIDECAR_ORDERER_IDENTITY_BCCSP_PKCS11_{LABEL,PIN} env vars set by docker
-  # compose (so no secret goes into the YAML).
   identity:
     msp-id: {{ .SidecarIdentityMSPID }}
     msp-dir: {{ .SidecarIdentityMSPDir }}
+{{- if .SidecarIdentityBCCSP }}
     bccsp:
-      Default: PKCS11
+      Default: {{ .SidecarIdentityBCCSP.Default }}
+{{- if .SidecarIdentityBCCSP.PKCS11 }}
       PKCS11:
-        Security: 256
-        Hash: SHA2
-        Library: /usr/local/lib/libkms_pkcs11.so
-        Label: ""
-        Pin: ""
+        Library: {{ .SidecarIdentityBCCSP.PKCS11.Library }}
+        Label: "{{ .SidecarIdentityBCCSP.PKCS11.Label }}"
+        Pin: "{{ .SidecarIdentityBCCSP.PKCS11.Pin }}"
+        Hash: {{ .SidecarIdentityBCCSP.PKCS11.Hash }}
+        Security: {{ .SidecarIdentityBCCSP.PKCS11.Security }}
+{{- end }}
+{{- if .SidecarIdentityBCCSP.SW }}
+      SW:
+        Hash: {{ .SidecarIdentityBCCSP.SW.Hash }}
+        Security: {{ .SidecarIdentityBCCSP.SW.Security }}
+{{- end }}
+{{- end }}
 committer:
   endpoint:
     host: {{ .CommitterHost }}

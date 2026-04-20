@@ -105,9 +105,8 @@ type DockerConfig struct {
 	NetworkExternal bool   `yaml:"network_external"`
 
 	// Image settings
-	OrdererImage      string `yaml:"orderer_image"`
-	CommitterImage    string `yaml:"committer_image"`
-	CommitterKMSImage string `yaml:"committer_kms_image"` // Used for committer components that need MSP signing (e.g. sidecar v0.1.9+)
+	OrdererImage   string `yaml:"orderer_image"`
+	CommitterImage string `yaml:"committer_image"`
 
 	// Tools image (for cryptogen, configtxgen, etc.)
 	// Defaults to docker.io/hyperledger/fabric-x-tools:0.0.4 (matching Ansible)

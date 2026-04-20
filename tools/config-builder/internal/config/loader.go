@@ -68,6 +68,10 @@ func Load(path string) (*NetworkConfig, error) {
 		config.OutputDir = filepath.Join(config.ProjectDir, config.OutputDir)
 	}
 
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
 	return config, nil
 }
 
@@ -137,6 +141,25 @@ func (c *NetworkConfig) Validate() error {
 		}
 		if len(org.Orderers) == 0 {
 			return fmt.Errorf("orderer_orgs[%d] must have at least one orderer", i)
+		}
+	}
+
+	if c.KMS != nil && c.KMS.Enabled {
+		for i := range c.OrdererOrgs {
+			if _, err := c.OrdererOrgs[i].ResolveKMSUserPin(); err != nil {
+				return err
+			}
+			if _, err := c.ResolveKMSTokenLabel(c.OrdererOrgs[i].KMSTokenLabel); err != nil {
+				return fmt.Errorf("orderer org %q: %w", c.OrdererOrgs[i].Name, err)
+			}
+		}
+		for i := range c.PeerOrgs {
+			if _, err := c.PeerOrgs[i].ResolveKMSUserPin(); err != nil {
+				return err
+			}
+			if _, err := c.ResolveKMSTokenLabel(c.PeerOrgs[i].KMSTokenLabel); err != nil {
+				return fmt.Errorf("peer org %q: %w", c.PeerOrgs[i].Name, err)
+			}
 		}
 	}
 

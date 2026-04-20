@@ -39,8 +39,10 @@ func (g *Generator) Generate() error {
 
 	composePath := filepath.Join(absOutputDir, "docker-compose.yaml")
 
-	// Build compose structure
-	compose := g.buildCompose(absOutputDir)
+	compose, err := g.buildCompose(absOutputDir)
+	if err != nil {
+		return err
+	}
 
 	// Marshal to YAML
 	data, err := yaml.Marshal(compose)
@@ -111,7 +113,7 @@ type Volume struct {
 }
 
 // buildCompose constructs the docker-compose structure
-func (g *Generator) buildCompose(outputDir string) *Compose {
+func (g *Generator) buildCompose(outputDir string) (*Compose, error) {
 	compose := &Compose{
 		Name:     g.config.Docker.Name,
 		Services: make(map[string]Service),
@@ -122,11 +124,6 @@ func (g *Generator) buildCompose(outputDir string) *Compose {
 				Name:     g.config.Docker.Network,         // Explicit name to avoid prefix
 			},
 		},
-		// Volumes: map[string]Volume{
-		// 	"committer-db-data": {
-		// 		Driver: "local",
-		// 	},
-		// },
 	}
 
 	// Track component indices per type
@@ -135,8 +132,10 @@ func (g *Generator) buildCompose(outputDir string) *Compose {
 	ordererServicesByType := make(map[string][]string) // type -> []serviceName
 
 	// Add orderer services
-	for _, org := range g.config.OrdererOrgs {
-		for _, orderer := range org.Orderers {
+	for i := range g.config.OrdererOrgs {
+		org := &g.config.OrdererOrgs[i]
+		for j := range org.Orderers {
+			orderer := &org.Orderers[j]
 			componentType := orderer.Type
 			if componentIndices[componentType] == 0 {
 				componentIndices[componentType] = 1
@@ -146,7 +145,10 @@ func (g *Generator) buildCompose(outputDir string) *Compose {
 			componentIndex := componentIndices[componentType]
 
 			serviceName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
-			service := g.buildOrdererService(serviceName, &org, &orderer, outputDir)
+			service, err := g.buildOrdererService(serviceName, org, orderer, outputDir)
+			if err != nil {
+				return nil, err
+			}
 			compose.Services[serviceName] = service
 
 			// Track service by type
@@ -182,14 +184,18 @@ func (g *Generator) buildCompose(outputDir string) *Compose {
 
 	// Add committer services
 	if g.config.Committer != nil {
-		for _, component := range g.config.Committer.Components {
+		for i := range g.config.Committer.Components {
+			component := &g.config.Committer.Components[i]
 			serviceName := component.Name
-			service := g.buildCommitterService(serviceName, &component, outputDir)
+			service, err := g.buildCommitterService(serviceName, component, outputDir)
+			if err != nil {
+				return nil, err
+			}
 			compose.Services[serviceName] = service
 		}
 	}
 
-	return compose
+	return compose, nil
 }
 
 // getCurrentUserUIDGID returns the current user's UID:GID string for container user setting
@@ -276,7 +282,7 @@ func normalizePathForDockerCompose(path string) string {
 }
 
 // buildOrdererService builds a service definition for an orderer component
-func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererOrg, orderer *config.Node, outputDir string) Service {
+func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererOrg, orderer *config.Node, outputDir string) (Service, error) {
 	configDir := filepath.Join(outputDir, "local-deployment", serviceName, "config")
 
 	service := Service{
@@ -312,10 +318,12 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 
 	// Add KMS environment variables if KMS is enabled
 	if g.config.KMS != nil && g.config.KMS.Enabled {
-		kmsEndpoint := g.config.KMS.Endpoint
-		tokenLabel := g.config.KMS.TokenLabel
+		tokenLabel, err := g.config.ResolveKMSTokenLabel(org.KMSTokenLabel)
+		if err != nil {
+			return Service{}, fmt.Errorf("orderer org %q: %w", org.Name, err)
+		}
 		service.Environment = append(service.Environment,
-			fmt.Sprintf("SIGN_KMS_ENDPOINT=%s", kmsEndpoint),
+			fmt.Sprintf("SIGN_KMS_ENDPOINT=%s", g.config.KMS.Endpoint),
 			fmt.Sprintf("KMS_TOKEN_LABEL=%s", tokenLabel),
 		)
 	}
@@ -349,11 +357,11 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 		"--config=/config/node_config.yaml",
 	}
 
-	return service
+	return service, nil
 }
 
 // buildCommitterService builds a service definition for a committer component
-func (g *Generator) buildCommitterService(serviceName string, component *config.CommitterNode, outputDir string) Service {
+func (g *Generator) buildCommitterService(serviceName string, component *config.CommitterNode, outputDir string) (Service, error) {
 	configDir := filepath.Join(outputDir, "local-deployment", serviceName, "config")
 	configFile := fmt.Sprintf("config-%s.yml", component.Type)
 
@@ -362,15 +370,6 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 	if committerImage == "" {
 		// Try to use a public image tag, fallback to local if needed
 		committerImage = "hyperledger/fabric-x-committer:0.0.19"
-	}
-
-	// Sidecar (v0.1.9+) requires MSP signing identity to pass orderer Readers policy.
-	// When the MSP private key is managed by KMS (PKCS11 mode), the sidecar needs an
-	// image with libkms_pkcs11.so available. Other committer components (coordinator,
-	// verifier, validator, query-service) don't connect to orderer as signer so they
-	// keep using the vanilla committer image.
-	if component.Type == "sidecar" && g.config.Docker.CommitterKMSImage != "" {
-		committerImage = g.config.Docker.CommitterKMSImage
 	}
 
 	service := Service{
@@ -464,25 +463,17 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			"start-sidecar",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
-		// v0.1.9+ sidecar requires orderer.identity (MSP signer) and bootstrap
-		// genesis block to pass orderer deliver authorization.
-		// Mount the first peer org's channel_admin MSP and the genesis block from
-		// host-side cryptogen/configtxgen artifacts.
+		// v0.1.9+ sidecar requires orderer.identity (MSP signer) to pass orderer
+		// deliver authorization. Mount the first peer org's channel_admin MSP;
+		// the genesis block is copied into the sidecar config dir by the
+		// template engine (see internal/template/template.go).
 		if len(g.config.PeerOrgs) > 0 {
 			org := g.config.PeerOrgs[0]
 			mspHostPath := fmt.Sprintf("./build/config/cryptogen-artifacts/crypto/peerOrganizations/%s/users/channel_admin@%s/msp", org.Domain, org.Domain)
 			service.Volumes = append(service.Volumes,
 				fmt.Sprintf("%s:/msp/channel_admin:ro", mspHostPath),
-				"./build/config/configtxgen-artifacts/arma_block.pb:/config/genesis.block:ro",
 			)
 		}
-		// Inject PKCS11 label/pin via viper env override (SC_SIDECAR_<key> prefix).
-		// These map onto orderer.identity.bccsp.pkcs11.{label,pin} in config-sidecar.yml.
-		// Host-side values come from .env (KMS_TOKEN_LABEL, KMS_USER_PIN).
-		service.Environment = append(service.Environment,
-			"SC_SIDECAR_ORDERER_IDENTITY_BCCSP_PKCS11_LABEL=${KMS_TOKEN_LABEL}",
-			"SC_SIDECAR_ORDERER_IDENTITY_BCCSP_PKCS11_PIN=${KMS_USER_PIN}",
-		)
 		// Note: Ansible does not use Docker healthchecks for committer components
 	case "query-service":
 		service.Command = []string{
@@ -498,9 +489,9 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		if kmsEndpoint == "" {
 			kmsEndpoint = "http://host.docker.internal:9200"
 		}
-		tokenLabel := g.config.KMS.TokenLabel
-		if tokenLabel == "" {
-			tokenLabel = "tk"
+		tokenLabel, err := g.config.ResolveKMSTokenLabel("")
+		if err != nil {
+			return Service{}, fmt.Errorf("committer %q: %w", component.Name, err)
 		}
 		service.Environment = append(service.Environment,
 			fmt.Sprintf("SIGN_KMS_ENDPOINT=%s", kmsEndpoint),
@@ -570,7 +561,7 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		}
 	}
 
-	return service
+	return service, nil
 }
 
 // log prints a message if verbose mode is enabled

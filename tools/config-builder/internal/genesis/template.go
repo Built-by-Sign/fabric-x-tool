@@ -272,11 +272,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 
 	// Build orderer organizations
 	for _, org := range g.config.OrdererOrgs {
-		mspID := org.Name
-		if strings.HasSuffix(org.Name, "MSP") {
-			// Remove MSP suffix for anchor name
-			mspID = strings.TrimSuffix(org.Name, "MSP")
-		}
+		mspID := config.DeriveMSPIDBase(org.Name)
 
 		// Check MSP directory path
 		mspDir := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "msp")
@@ -304,10 +300,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 
 	// Build peer organizations
 	for _, org := range g.config.PeerOrgs {
-		mspID := org.Name
-		if strings.HasSuffix(org.Name, "MSP") {
-			mspID = strings.TrimSuffix(org.Name, "MSP")
-		}
+		mspID := config.DeriveMSPIDBase(org.Name)
 
 		// Check MSP directory path
 		mspDir := filepath.Join(cryptoArtifactsDir, "crypto", "peerOrganizations", org.Domain, "msp")
