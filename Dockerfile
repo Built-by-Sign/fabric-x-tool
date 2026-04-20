@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ---------- build fabric-ca -------------
-FROM golang:1.25.7 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /build
 
 # clone fabric-ca repo
@@ -27,16 +27,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.24
 
-# copy local source AFTER remote builds so source changes don't invalidate above layers
-COPY ./tools/fxconfig/ ./fxconfig
-COPY ./tools/config-builder/ ./config-builder
-
-# build fxconfig
-WORKDIR /build/fxconfig
+# Build fxconfig from our Built-by-Sign/fabric-x fork (PKCS#11 / HSM support
+# until upstream merges the patch). Keep this above the config-builder COPY so
+# edits to the local config-builder source do not invalidate this layer.
+ARG FABRIC_X_FORK_REF=feat/pkcs11-support
+RUN git clone --branch ${FABRIC_X_FORK_REF} --depth=1 --single-branch \
+    https://github.com/Built-by-Sign/fabric-x.git /build/fabric-x-src
+WORKDIR /build/fabric-x-src/tools/fxconfig
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go mod download && \
-    go build -ldflags="-s -w" -trimpath -o fxconfig .
+    go build -ldflags="-s -w" -trimpath -o /build/fxconfig/fxconfig .
+
+# copy local source AFTER remote builds so source changes don't invalidate above layers
+COPY ./tools/config-builder/ /build/config-builder
 
 # build config-builder
 WORKDIR /build/config-builder
