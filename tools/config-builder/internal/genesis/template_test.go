@@ -19,7 +19,7 @@ func TestGenerateConfigtxFromTemplateUsesVendoredTemplate(t *testing.T) {
 			Orderers: []config.Node{
 				{Name: "router0", Type: "router", Host: "router0.example.com", Port: 7050},
 				{Name: "assembler0", Type: "assembler", Host: "assembler0.example.com", Port: 7053},
-				{Name: "consenter0", Type: "consenter", Host: "consenter0.example.com", Port: 7052},
+				{Name: "consenter0", Type: "consensus", Host: "consenter0.example.com", Port: 7052},
 			},
 		}},
 		PeerOrgs: []config.PeerOrg{{
@@ -113,7 +113,7 @@ func TestGenerateConfigtxUsesPartyIDsForConsenterMapping(t *testing.T) {
 				Domain: "one.example.com",
 				Orderers: []config.Node{{
 					Name: "consenter0",
-					Type: "consenter",
+					Type: "consensus",
 					Host: "consenter0.one.example.com",
 					Port: 7052,
 				}},
@@ -123,7 +123,7 @@ func TestGenerateConfigtxUsesPartyIDsForConsenterMapping(t *testing.T) {
 				Domain: "two.example.com",
 				Orderers: []config.Node{{
 					Name: "consenter0",
-					Type: "consenter",
+					Type: "consensus",
 					Host: "consenter0.two.example.com",
 					Port: 8052,
 				}},

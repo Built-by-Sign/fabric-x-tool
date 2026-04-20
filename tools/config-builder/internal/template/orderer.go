@@ -44,7 +44,7 @@ func (e *Engine) getOrdererTemplate(ordererType string) (*template.Template, err
 		mainPath = "orderer/config-router.yaml.tmpl"
 	case "batcher":
 		mainPath = "orderer/config-batcher.yaml.tmpl"
-	case "consenter":
+	case "consensus":
 		mainPath = "orderer/config-consensus.yaml.tmpl"
 	case "assembler":
 		mainPath = "orderer/config-assembler.yaml.tmpl"

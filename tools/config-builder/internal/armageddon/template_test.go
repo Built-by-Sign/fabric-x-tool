@@ -17,7 +17,7 @@ func TestGenerateSharedConfigYamlUsesVendoredTemplate(t *testing.T) {
 			Orderers: []config.Node{
 				{Name: "router0", Type: "router", Port: 7050},
 				{Name: "batcher0", Type: "batcher", Port: 7051, ShardID: 7},
-				{Name: "consenter0", Type: "consenter", Port: 7052},
+				{Name: "consenter0", Type: "consensus", Port: 7052},
 				{Name: "assembler0", Type: "assembler", Port: 7053},
 			},
 		}},
@@ -58,7 +58,7 @@ func TestSharedConfigIncludesAllBatchers(t *testing.T) {
 				{Name: "router0", Type: "router", Port: 7050},
 				{Name: "batcher0", Type: "batcher", Host: "batcher0.example.com", Port: 7051, ShardID: 0},
 				{Name: "batcher1", Type: "batcher", Host: "batcher1.example.com", Port: 8051, ShardID: 1},
-				{Name: "consenter0", Type: "consenter", Port: 7052},
+				{Name: "consenter0", Type: "consensus", Port: 7052},
 				{Name: "assembler0", Type: "assembler", Port: 7053},
 			},
 		}},

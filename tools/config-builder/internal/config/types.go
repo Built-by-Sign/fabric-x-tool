@@ -63,7 +63,7 @@ type PeerOrg struct {
 // Node represents a network node (orderer or peer)
 type Node struct {
 	Name           string `yaml:"name"`
-	Type           string `yaml:"type"` // router, batcher, consenter, assembler (for orderer)
+	Type           string `yaml:"type"` // router, batcher, consensus, assembler (for orderer)
 	Port           int    `yaml:"port"`
 	MonitoringPort int    `yaml:"monitoring_port,omitempty"`
 	ShardID        int    `yaml:"shard_id,omitempty"`
@@ -170,7 +170,7 @@ func DefaultOrdererPort(ordererType string) int {
 		return 7050
 	case "batcher":
 		return 7051
-	case "consenter":
+	case "consensus":
 		return 7052
 	case "assembler":
 		return 7053

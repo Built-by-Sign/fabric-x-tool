@@ -77,7 +77,7 @@ func TestDefaultOrdererPort(t *testing.T) {
 	tests := map[string]int{
 		"router":    7050,
 		"batcher":   7051,
-		"consenter": 7052,
+		"consensus": 7052,
 		"assembler": 7053,
 		"unknown":   0,
 	}

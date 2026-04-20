@@ -160,9 +160,9 @@ func (g *Generator) buildCompose(outputDir string) (*Compose, error) {
 	}
 
 	// Add dependencies for orderer services based on startup order:
-	// consenter → batcher → assembler → router
+	// consensus → batcher → assembler → router
 	// Each type depends on the previous type being started
-	ordererTypeOrder := []string{"consenter", "batcher", "assembler", "router"}
+	ordererTypeOrder := []string{"consensus", "batcher", "assembler", "router"}
 	for i := 1; i < len(ordererTypeOrder); i++ {
 		currentType := ordererTypeOrder[i]
 		previousType := ordererTypeOrder[i-1]
@@ -346,18 +346,8 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", monPort, monPort))
 	}
 
-	// Set command based on orderer type
-	// Ansible uses different commands for different types:
-	// - router: "router --config=..."
-	// - batcher: "batcher --config=..."
-	// - consenter: "consensus --config=..." (not "consenter")
-	// - assembler: "assembler --config=..."
-	commandType := orderer.Type
-	if orderer.Type == "consenter" {
-		commandType = "consensus" // Ansible uses "consensus" command, not "consenter"
-	}
 	service.Command = []string{
-		commandType,
+		orderer.Type,
 		"--config=/config/node_config.yaml",
 	}
 

@@ -341,7 +341,7 @@ orderer_orgs:
     kms_user_pin: "1234"              # Optional: KMS user PIN
     orderers:
       - name: orderer0
-        type: router                   # router, batcher, consenter, assembler
+        type: router                   # router, batcher, consensus, assembler
         port: 7050
         host: orderer0.example.com
         shard_id: 0                    # Optional: for sharded nodes

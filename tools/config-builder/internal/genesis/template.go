@@ -111,9 +111,9 @@ func (g *Generator) buildTemplateData() *TemplateData {
 		data.OrdererOrgs = append(data.OrdererOrgs, orgData)
 		data.OrdererOrgRefs = append(data.OrdererOrgRefs, mspID)
 
-		// Add consenters for ConsenterMapping (only consenter type orderers)
+		// Add consenters for ConsenterMapping (only consensus type orderers)
 		for _, orderer := range org.Orderers {
-			if orderer.Type == "consenter" {
+			if orderer.Type == "consensus" {
 				consenter := g.buildConsenterData(&org, &orderer, mspID, partyID, cryptoArtifactsDir)
 				data.Consenters = append(data.Consenters, consenter)
 			}

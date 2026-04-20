@@ -105,7 +105,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 				routerNode = node
 			case "batcher":
 				batcherNodes = append(batcherNodes, node)
-			case "consenter":
+			case "consensus":
 				consenterNode = node
 			case "assembler":
 				assemblerNode = node
