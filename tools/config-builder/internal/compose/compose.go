@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,7 +52,7 @@ func (g *Generator) Generate() error {
 	}
 
 	// Write to file
-	if err := os.WriteFile(composePath, data, 0644); err != nil {
+	if err := os.WriteFile(composePath, data, perms.FilePublic); err != nil {
 		return fmt.Errorf("failed to write docker-compose: %w", err)
 	}
 
@@ -420,15 +421,28 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			fmt.Sprintf("POSTGRES_DB=%s", component.PostgresDB),
 			"PGDATA=/var/lib/postgresql/data/pgdata", // Match Ansible configuration
 		)
-		command := []string{"postgres", "-c", fmt.Sprintf("port=%d", dbPort)}
 		if g.config.TLS != nil && g.config.TLS.Enabled {
-			command = append(command,
-				"-c", "ssl=on",
-				"-c", "ssl_key_file=/var/lib/postgresql/config/tls/server.key",
-				"-c", "ssl_cert_file=/var/lib/postgresql/config/tls/server.crt",
+			// Postgres insists that its ssl_key_file be owned by the DB user and
+			// mode <=0600. The bind-mounted TLS key inherits the host user's UID,
+			// which rarely matches the in-container postgres UID when the tree is
+			// deployed to another machine. Copy the key into a container-local
+			// path and fix ownership/mode at startup so the generated artifacts
+			// stay world-readable on disk yet the container boots anywhere.
+			keyCopy := "/var/lib/postgresql/server.key"
+			script := fmt.Sprintf(
+				"cp /var/lib/postgresql/config/tls/server.key %s && "+
+					"chown postgres:postgres %s && "+
+					"chmod 600 %s && "+
+					"exec docker-entrypoint.sh postgres "+
+					"-c port=%d -c ssl=on "+
+					"-c ssl_key_file=%s "+
+					"-c ssl_cert_file=/var/lib/postgresql/config/tls/server.crt",
+				keyCopy, keyCopy, keyCopy, dbPort, keyCopy,
 			)
+			service.Command = []string{"sh", "-ec", script}
+		} else {
+			service.Command = []string{"postgres", "-c", fmt.Sprintf("port=%d", dbPort)}
 		}
-		service.Command = command
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", dbPort, dbPort))
 		// Mount the generated local deployment data directory, matching the
 		// non-Kubernetes Ansible layout where PostgreSQL persists under the

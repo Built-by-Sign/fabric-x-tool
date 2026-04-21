@@ -73,9 +73,16 @@ func TestBuildCommitterServiceDBEnablesPostgresTLS(t *testing.T) {
 	}
 	joinedCommand := strings.Join(command, " ")
 	for _, want := range []string{
+		// Shell wrapper that copies the TLS key, sets ownership/mode, and execs postgres.
+		// This keeps the host-side key world-accessible while satisfying Postgres's
+		// strict requirements regardless of container UID mapping.
+		"cp /var/lib/postgresql/config/tls/server.key /var/lib/postgresql/server.key",
+		"chown postgres:postgres /var/lib/postgresql/server.key",
+		"chmod 600 /var/lib/postgresql/server.key",
+		"exec docker-entrypoint.sh postgres",
 		"port=15432",
 		"ssl=on",
-		"ssl_key_file=/var/lib/postgresql/config/tls/server.key",
+		"ssl_key_file=/var/lib/postgresql/server.key",
 		"ssl_cert_file=/var/lib/postgresql/config/tls/server.crt",
 	} {
 		if !strings.Contains(joinedCommand, want) {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 	templatefiles "config-builder/templates"
 )
 
@@ -119,7 +120,7 @@ func (g *Generator) findArmageddon() (string, error) {
 // installArmageddon installs armageddon using go install (like Ansible does)
 func (g *Generator) installArmageddon(targetPath string) error {
 	// Create output directory
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), perms.Dir); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -147,7 +148,7 @@ func (g *Generator) installArmageddon(targetPath string) error {
 // buildArmageddon builds the armageddon binary from local source
 func (g *Generator) buildArmageddon(sourceDir, targetPath string) error {
 	// Create output directory
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(targetPath), perms.Dir); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -175,7 +176,7 @@ func (g *Generator) generateSharedConfigYaml() (string, error) {
 	}
 
 	configDir := filepath.Join(absOutputDir, "build", "config", "armageddon-artifacts")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, perms.Dir); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)
 	}
 

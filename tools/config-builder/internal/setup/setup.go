@@ -9,6 +9,7 @@ import (
 	"config-builder/internal/config"
 	"config-builder/internal/crypto"
 	"config-builder/internal/genesis"
+	"config-builder/internal/perms"
 	"config-builder/internal/template"
 )
 
@@ -125,7 +126,7 @@ func (r *Runner) createDirectories() error {
 	}
 
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, perms.Dir); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 		r.logDetails("  Created: %s", dir)

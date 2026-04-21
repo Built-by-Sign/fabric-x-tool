@@ -9,6 +9,7 @@ import (
 
 	"config-builder/internal/bccsp"
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 )
 
 // Engine handles template-based configuration file generation
@@ -84,11 +85,10 @@ func (e *Engine) generateOrdererConfigs() error {
 			componentIndex := componentIndices[componentType]
 
 			// Create node config directory following Ansible structure: orderer-{type}-{index}/config/
-			// Ansible uses mode: "0o750" for directories
-			componentDirName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
+				componentDirName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 			nodeConfigDir := filepath.Join(componentDir, "config")
-			if err := os.MkdirAll(nodeConfigDir, 0750); err != nil {
+			if err := os.MkdirAll(nodeConfigDir, perms.Dir); err != nil {
 				return fmt.Errorf("failed to create orderer config directory: %w", err)
 			}
 
@@ -135,12 +135,12 @@ func (e *Engine) generateCommitterConfigs() error {
 			componentDirName := e.config.CommitterComponentDirName(component)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 			dataDir := filepath.Join(componentDir, "data")
-			if err := os.MkdirAll(dataDir, 0750); err != nil {
+			if err := os.MkdirAll(dataDir, perms.Dir); err != nil {
 				return fmt.Errorf("failed to create committer db data directory: %w", err)
 			}
 			if e.getTLSEnabled() {
 				componentConfigDir := filepath.Join(componentDir, "config")
-				if err := os.MkdirAll(componentConfigDir, 0750); err != nil {
+				if err := os.MkdirAll(componentConfigDir, perms.Dir); err != nil {
 					return fmt.Errorf("failed to create committer db config directory: %w", err)
 				}
 				if err := e.copyCommitterTLS(&component, componentConfigDir); err != nil {
@@ -152,11 +152,10 @@ func (e *Engine) generateCommitterConfigs() error {
 		}
 
 		// Create component config directory following Ansible structure: committer-{type}/config/
-		// Ansible uses mode: "0o750" for directories
 		componentDirName := e.config.CommitterComponentDirName(component)
 		componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 		componentConfigDir := filepath.Join(componentDir, "config")
-		if err := os.MkdirAll(componentConfigDir, 0750); err != nil {
+		if err := os.MkdirAll(componentConfigDir, perms.Dir); err != nil {
 			return fmt.Errorf("failed to create committer config directory: %w", err)
 		}
 
@@ -697,9 +696,7 @@ func (e *Engine) getTLSClientAuthRequired() bool {
 }
 
 func (e *Engine) copyFile(src, dst string) error {
-	// Create destination directory if needed
-	// Ansible uses mode: "0o750" for directories
-	if err := os.MkdirAll(filepath.Dir(dst), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), perms.Dir); err != nil {
 		return err
 	}
 
@@ -709,14 +706,11 @@ func (e *Engine) copyFile(src, dst string) error {
 		return err
 	}
 
-	// Write destination file
-	// For genesis.block and other data files, use 0o644 (rw-r--r--)
-	// For sensitive files like private keys, preserve original permissions
-	perm := os.FileMode(0644)
+	// Default to the shared public-file permission; if the source is restricted
+	// (e.g. private key at 0600), preserve that mode so secrets stay secrets.
+	perm := perms.FileConfig
 	if info, err := os.Stat(src); err == nil {
-		// Preserve original permissions for sensitive files (like private keys)
-		if info.Mode().Perm()&0077 == 0 {
-			// If original file has no group/other permissions, preserve it
+		if info.Mode().Perm()&0o077 == 0 {
 			perm = info.Mode().Perm()
 		}
 	}
@@ -813,9 +807,9 @@ func (e *Engine) executeTemplate(tmpl *template.Template, data interface{}, outp
 		return err
 	}
 
-	// Set file permissions to match Ansible: 0o640 (rw-r-----) for config files
-	// Ansible uses mode: "0o640" for node_config.yaml and config-*.yml files
-	if err := os.Chmod(outputPath, 0640); err != nil {
+	// World-readable so the generated tree can be copied to other hosts and
+	// consumed by container processes running under any UID/GID.
+	if err := os.Chmod(outputPath, perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 

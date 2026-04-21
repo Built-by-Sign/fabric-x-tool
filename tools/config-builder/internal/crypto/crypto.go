@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 	templatefiles "config-builder/templates"
 )
 
@@ -112,7 +113,7 @@ func (g *Generator) generateCryptoConfig() (string, error) {
 	}
 
 	configDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, perms.Dir); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -129,7 +130,7 @@ func (g *Generator) generateCryptoConfig() (string, error) {
 	}
 
 	// Write to file
-	if err := os.WriteFile(configPath, buf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(configPath, buf.Bytes(), perms.FileConfig); err != nil {
 		return "", fmt.Errorf("failed to write crypto config: %w", err)
 	}
 
@@ -363,7 +364,7 @@ func (g *Generator) runCryptogenLocal(configPath, outputDir, cryptoDir string) e
 	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -402,10 +403,10 @@ func (g *Generator) runCryptogenDocker(configPath, baseDir, tempOutputDir, crypt
 	dockerOutputDir := filepath.Join(dockerConfigDir, "crypto")
 
 	// Ensure directories exist
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
+	if err := os.MkdirAll(baseDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create base directory: %w", err)
 	}
-	if err := os.MkdirAll(tempOutputDir, 0755); err != nil {
+	if err := os.MkdirAll(tempOutputDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create temp output directory: %w", err)
 	}
 
@@ -430,7 +431,7 @@ func (g *Generator) runCryptogenDocker(configPath, baseDir, tempOutputDir, crypt
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
-	if err := os.WriteFile(configInBaseDir, configData, 0644); err != nil {
+	if err := os.WriteFile(configInBaseDir, configData, perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to copy config file to container directory: %w", err)
 	}
 
@@ -460,7 +461,7 @@ func (g *Generator) moveCryptoFiles(tempOutputDir, cryptoDir string) error {
 	// Move generated files from temp directory to crypto/ subdirectory
 	// Cryptogen generates peerOrganizations and ordererOrganizations directly in output dir
 	// We need them in crypto/ subdirectory
-	if err := os.MkdirAll(cryptoDir, 0755); err != nil {
+	if err := os.MkdirAll(cryptoDir, perms.Dir); err != nil {
 		os.RemoveAll(tempOutputDir)
 		return fmt.Errorf("failed to create crypto directory: %w", err)
 	}

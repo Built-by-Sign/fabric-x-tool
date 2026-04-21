@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 )
 
 // Generator handles genesis block generation
@@ -194,7 +195,7 @@ func (g *Generator) runConfigtxgenLocal(configPath, absOutputDir, genesisBlockPa
 	outputDir := filepath.Join(absOutputDir, "build", "config", "configtxgen-artifacts")
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0750); err != nil {
+	if err := os.MkdirAll(outputDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -243,7 +244,7 @@ func (g *Generator) runConfigtxgenDocker(configPath, absOutputDir, genesisBlockP
 	armageddonArtifactsDir := filepath.Join(absOutputDir, "build", "config", "armageddon-artifacts")
 
 	// Ensure directories exist
-	if err := os.MkdirAll(outputDir, 0750); err != nil {
+	if err := os.MkdirAll(outputDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -278,7 +279,7 @@ func (g *Generator) runConfigtxgenDocker(configPath, absOutputDir, genesisBlockP
 	// Replace armageddon artifacts path
 	configStr = strings.ReplaceAll(configStr, armageddonArtifactsDir, dockerArmageddonDir)
 
-	if err := os.WriteFile(configInOutputDir, []byte(configStr), 0644); err != nil {
+	if err := os.WriteFile(configInOutputDir, []byte(configStr), perms.FilePublic); err != nil {
 		return fmt.Errorf("failed to copy config file to container directory: %w", err)
 	}
 

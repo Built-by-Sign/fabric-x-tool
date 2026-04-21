@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"config-builder/internal/perms"
 )
 
 // expandEnvVars replaces ${VAR} or $VAR with environment variable values
@@ -93,7 +95,7 @@ func Save(config *NetworkConfig, path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

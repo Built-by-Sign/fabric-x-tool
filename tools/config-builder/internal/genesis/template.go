@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 	templatefiles "config-builder/templates"
 )
 
@@ -46,7 +47,7 @@ type OrgTemplateData struct {
 func (g *Generator) generateConfigtxFromTemplate() (string, error) {
 	absOutputDir, _ := filepath.Abs(g.outputDir)
 	configDir := filepath.Join(absOutputDir, "build", "config", "configtxgen-artifacts")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, perms.Dir); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -67,7 +68,7 @@ func (g *Generator) generateConfigtxFromTemplate() (string, error) {
 	}
 
 	// Write to file
-	if err := os.WriteFile(configPath, buf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(configPath, buf.Bytes(), perms.FileConfig); err != nil {
 		return "", fmt.Errorf("failed to write configtx: %w", err)
 	}
 

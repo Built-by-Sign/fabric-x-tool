@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 	templatefiles "config-builder/templates"
 
 	"golang.org/x/term"
@@ -276,7 +277,7 @@ func (g *FabricCAGenerator) GenerateOrgCrypto(orgName, domain, caURL, tokenLabel
 	}
 
 	orgDir := filepath.Join(cryptoDir, orgDirType, domain)
-	if err := os.MkdirAll(orgDir, 0755); err != nil {
+	if err := os.MkdirAll(orgDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create org directory: %w", err)
 	}
 
@@ -319,7 +320,7 @@ func (g *FabricCAGenerator) generateNodeCrypto(orgName, domain, caURL, tokenLabe
 
 	// Determine node directory
 	nodeDir := filepath.Join(cryptoDir, orgDirType, domain, nodeType, fmt.Sprintf("%s.%s", node.Name, domain), "msp")
-	if err := os.MkdirAll(nodeDir, 0755); err != nil {
+	if err := os.MkdirAll(nodeDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create node directory: %w", err)
 	}
 
@@ -369,7 +370,7 @@ func (g *FabricCAGenerator) generateNodeCrypto(orgName, domain, caURL, tokenLabe
 	// Create an empty priv_sk file as a marker
 	// The file content doesn't matter because BCCSP will use KMS for actual signing
 	markerContent := []byte("# This is a marker file for PKCS11 mode\n# Actual private key is stored in KMS\n# SKI will be derived from the certificate\n")
-	if err := os.WriteFile(privSkPath, markerContent, 0600); err != nil {
+	if err := os.WriteFile(privSkPath, markerContent, perms.FilePrivateKey); err != nil {
 		return fmt.Errorf("failed to create priv_sk marker file: %w", err)
 	}
 
@@ -404,7 +405,7 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 	// Get node directory and keys directory
 	nodeDir := filepath.Join(cryptoDir, orgDirType, domain, nodeType, fmt.Sprintf("%s.%s", node.Name, domain))
 	keysDir := filepath.Join(nodeDir, "keys")
-	if err := os.MkdirAll(keysDir, 0755); err != nil {
+	if err := os.MkdirAll(keysDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create keys directory: %w", err)
 	}
 
@@ -429,7 +430,7 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 
 	// Rename and reorganize TLS files to standard format
 	tlsDir := filepath.Join(nodeDir, "tls")
-	if err := os.MkdirAll(tlsDir, 0755); err != nil {
+	if err := os.MkdirAll(tlsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create TLS directory: %w", err)
 	}
 
@@ -446,6 +447,9 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 	dstKey := filepath.Join(tlsDir, "server.key")
 	if err := g.copyFile(srcKey, dstKey); err != nil {
 		return fmt.Errorf("failed to copy TLS private key: %w", err)
+	}
+	if err := os.Chmod(dstKey, perms.FilePrivateKey); err != nil {
+		return fmt.Errorf("failed to chmod TLS private key: %w", err)
 	}
 
 	// Get CA certificate path first (needed for creating certificate chain)
@@ -484,7 +488,7 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 	// Write complete certificate chain: server cert + CA cert
 	// The order is important: leaf certificate first, then intermediate/root CA
 	certChain := append(serverCertData, caCertData...)
-	if err := os.WriteFile(dstCert, certChain, 0644); err != nil {
+	if err := os.WriteFile(dstCert, certChain, perms.FileCert); err != nil {
 		return fmt.Errorf("failed to write TLS certificate chain: %w", err)
 	}
 
@@ -496,6 +500,9 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 	dstNodeKey := filepath.Join(keysDir, "node.key")
 	if err := g.copyFile(srcKey, dstNodeKey); err != nil {
 		return fmt.Errorf("failed to copy node.key: %w", err)
+	}
+	if err := os.Chmod(dstNodeKey, perms.FilePrivateKey); err != nil {
+		return fmt.Errorf("failed to chmod node.key: %w", err)
 	}
 	dstNodeCrt := filepath.Join(keysDir, "node.crt")
 	if err := g.copyFile(srcCert, dstNodeCrt); err != nil {
@@ -526,7 +533,7 @@ func (g *FabricCAGenerator) GenerateAdminUser(domain, caURL, tokenLabel string, 
 
 	// Create Admin user directory: users/Admin@{domain}/msp
 	adminDir := filepath.Join(cryptoDir, orgDirType, domain, "users", fmt.Sprintf("Admin@%s", domain), "msp")
-	if err := os.MkdirAll(adminDir, 0755); err != nil {
+	if err := os.MkdirAll(adminDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create admin directory: %w", err)
 	}
 
@@ -551,7 +558,7 @@ func (g *FabricCAGenerator) GenerateAdminUser(domain, caURL, tokenLabel string, 
 	keystoreDir := filepath.Join(adminDir, "keystore")
 	privSkPath := filepath.Join(keystoreDir, "priv_sk")
 	markerContent := []byte("# This is a marker file for PKCS11 mode\n# Actual private key is stored in KMS\n# SKI will be derived from the certificate\n")
-	if err := os.WriteFile(privSkPath, markerContent, 0600); err != nil {
+	if err := os.WriteFile(privSkPath, markerContent, perms.FilePrivateKey); err != nil {
 		return fmt.Errorf("failed to create priv_sk marker file for Admin: %w", err)
 	}
 
@@ -590,7 +597,7 @@ func (g *FabricCAGenerator) generateMSPConfig(mspDir, domain string) error {
     OrganizationalUnitIdentifier: orderer
 `, domain, domain, domain, domain)
 
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to write config.yaml: %w", err)
 	}
 
@@ -664,10 +671,10 @@ func (g *FabricCAGenerator) createOrgMSP(domain, cryptoDir string, orgType strin
 	orgTLSCACertsDir := filepath.Join(orgMSPDir, "tlscacerts")
 
 	// Create org MSP directories
-	if err := os.MkdirAll(orgCACertsDir, 0755); err != nil {
+	if err := os.MkdirAll(orgCACertsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create org cacerts directory: %w", err)
 	}
-	if err := os.MkdirAll(orgTLSCACertsDir, 0755); err != nil {
+	if err := os.MkdirAll(orgTLSCACertsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create org tlscacerts directory: %w", err)
 	}
 
@@ -737,7 +744,7 @@ func (g *FabricCAGenerator) copyFile(src, dst string) error {
 	}
 	defer sourceFile.Close()
 
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), perms.Dir); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
@@ -975,7 +982,7 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 
 	// Create user directory: users/{username}@{domain}/msp
 	userDir := filepath.Join(cryptoDir, "peerOrganizations", domain, "users", fmt.Sprintf("%s@%s", user.Name, domain), "msp")
-	if err := os.MkdirAll(userDir, 0755); err != nil {
+	if err := os.MkdirAll(userDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create user directory: %w", err)
 	}
 
@@ -1024,7 +1031,7 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 
 	// Create admincerts directory and copy the user certificate
 	admincertsDir := filepath.Join(userDir, "admincerts")
-	if err := os.MkdirAll(admincertsDir, 0755); err != nil {
+	if err := os.MkdirAll(admincertsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create admincerts directory: %w", err)
 	}
 
@@ -1036,14 +1043,14 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 
 	// Use cached CA certificates if available, otherwise read from disk
 	userCACertsDir := filepath.Join(userDir, "cacerts")
-	if err := os.MkdirAll(userCACertsDir, 0755); err != nil {
+	if err := os.MkdirAll(userCACertsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create user cacerts directory: %w", err)
 	}
 
 	if caCertData != nil {
 		// Write cached CA certificate
 		dstCACert := filepath.Join(userCACertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
-		if err := os.WriteFile(dstCACert, caCertData, 0644); err != nil {
+		if err := os.WriteFile(dstCACert, caCertData, perms.FileCert); err != nil {
 			return fmt.Errorf("failed to write CA certificate: %w", err)
 		}
 		g.logDetails("  Wrote cached CA certificate to user MSP: %s", dstCACert)
@@ -1067,14 +1074,14 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 
 	// Use cached TLS CA certificate if available
 	userTLSCACertsDir := filepath.Join(userDir, "tlscacerts")
-	if err := os.MkdirAll(userTLSCACertsDir, 0755); err != nil {
+	if err := os.MkdirAll(userTLSCACertsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create user tlscacerts directory: %w", err)
 	}
 
 	if tlsCACertData != nil {
 		// Write cached TLS CA certificate
 		dstTLSCACert := filepath.Join(userTLSCACertsDir, fmt.Sprintf("tlsca.%s-cert.pem", domain))
-		if err := os.WriteFile(dstTLSCACert, tlsCACertData, 0644); err != nil {
+		if err := os.WriteFile(dstTLSCACert, tlsCACertData, perms.FileCert); err != nil {
 			return fmt.Errorf("failed to write TLS CA certificate: %w", err)
 		}
 		g.logDetails("  Wrote cached TLS CA certificate: %s", dstTLSCACert)
@@ -1097,7 +1104,7 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 	keystoreDir := filepath.Join(userDir, "keystore")
 	privSkPath := filepath.Join(keystoreDir, "priv_sk")
 	markerContent := []byte("# This is a marker file for PKCS11 mode\n# Actual private key is stored in KMS\n# SKI will be derived from the certificate\n")
-	if err := os.WriteFile(privSkPath, markerContent, 0600); err != nil {
+	if err := os.WriteFile(privSkPath, markerContent, perms.FilePrivateKey); err != nil {
 		return fmt.Errorf("failed to create priv_sk marker file for user: %w", err)
 	}
 
@@ -1331,10 +1338,10 @@ func (g *FabricCAGenerator) writeFabricCAClientConfig(configPath, tokenLabel, us
 		return fmt.Errorf("failed to render fabric-ca-client config template: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), perms.Dir); err != nil {
 		return fmt.Errorf("failed to create fabric-ca-client config directory: %w", err)
 	}
-	if err := os.WriteFile(configPath, buf.Bytes(), 0600); err != nil {
+	if err := os.WriteFile(configPath, buf.Bytes(), perms.FileSecret); err != nil {
 		return fmt.Errorf("failed to write fabric-ca-client config: %w", err)
 	}
 	return nil
