@@ -17,6 +17,7 @@ docker buildx build \
     --platform linux/amd64,linux/arm64 \
     --tag ${REGISTRY}/${IMAGE_NAME}:${VERSION} \
     --tag ${REGISTRY}/${IMAGE_NAME}:latest \
+    --push \
     .
 
 echo ""
