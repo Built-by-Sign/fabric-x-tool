@@ -467,32 +467,18 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 		return fmt.Errorf("failed to copy TLS CA certificate: %w", err)
 	}
 
-	// Create server.crt with complete certificate chain (server cert + CA cert)
-	// This ensures the server sends the complete certificate chain during TLS handshake
-	// which is required for clients to verify the certificate
+	// Write the leaf TLS certificate only. The CA cert is written separately to
+	// ca.crt and clients reference it through ca-cert-paths for chain verification.
+	// Embedding the CA inside server.crt breaks Fabric-X's envelope TLS cert hash
+	// check: that hash is computed over the full server.crt file, but the peer's
+	// TLS handshake only presents the leaf cert, so claimed and actual hashes diverge.
 	srcCert := filepath.Join(tlsTempDir, "signcerts", "cert.pem")
 	dstCert := filepath.Join(tlsDir, "server.crt")
-
-	// Read server certificate
-	serverCertData, err := os.ReadFile(srcCert)
-	if err != nil {
-		return fmt.Errorf("failed to read TLS server certificate: %w", err)
+	if err := g.copyFile(srcCert, dstCert); err != nil {
+		return fmt.Errorf("failed to copy TLS server certificate: %w", err)
 	}
 
-	// Read CA certificate
-	caCertData, err := os.ReadFile(srcCA)
-	if err != nil {
-		return fmt.Errorf("failed to read TLS CA certificate: %w", err)
-	}
-
-	// Write complete certificate chain: server cert + CA cert
-	// The order is important: leaf certificate first, then intermediate/root CA
-	certChain := append(serverCertData, caCertData...)
-	if err := os.WriteFile(dstCert, certChain, perms.FileCert); err != nil {
-		return fmt.Errorf("failed to write TLS certificate chain: %w", err)
-	}
-
-	g.logDetails("  Created TLS certificate chain in server.crt (server cert + CA cert)")
+	g.logDetails("  Copied leaf TLS certificate to server.crt")
 
 	// Also copy to keys directory for compatibility with gen_crypto.sh
 	// gen_crypto.sh copies: ${dir}/node/keystore/* -> ${dir}/node.key
