@@ -468,38 +468,34 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 		}
 	case "validator":
 		service.Command = []string{
-			"start-vc",
+			"start", "vc",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
 		// Note: Ansible does not use Docker healthchecks for committer components
 		// It uses ansible.builtin.wait_for from the host to check ports instead
 	case "verifier":
 		service.Command = []string{
-			"start-verifier",
+			"start", "verifier",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
-		// Note: Ansible does not use Docker healthchecks for committer components
 	case "coordinator":
 		service.Command = []string{
-			"start-coordinator",
+			"start", "coordinator",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
-		// Note: Ansible does not use Docker healthchecks for committer components
 	case "sidecar":
-		service.Command = []string{
-			"start-sidecar",
-			"--config", fmt.Sprintf("/config/%s", configFile),
-		}
 		// v0.1.9+ sidecar requires orderer.identity (MSP signer) to pass orderer
 		// deliver authorization. The template engine copies the sidecar's
 		// dedicated peer MSP into /config/msp, matching the Ansible collection.
-		// Note: Ansible does not use Docker healthchecks for committer components
-	case "query-service":
 		service.Command = []string{
-			"start-query",
+			"start", "sidecar",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
-		// Note: Ansible does not use Docker healthchecks for committer components
+	case "query-service":
+		service.Command = []string{
+			"start", "query",
+			"--config", fmt.Sprintf("/config/%s", configFile),
+		}
 	}
 
 	// Add KMS environment variables if KMS is enabled (for non-db components)

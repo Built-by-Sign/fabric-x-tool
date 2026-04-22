@@ -1,7 +1,13 @@
 # Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
 # roles/committer/templates/config-sidecar.yaml.j2 (adapted to Go text/template)
-# Aligned against upstream commit: e4e1ce2
+# Aligned against fabric-x-committer v0.2.0.
 #
+# v0.2.0 schema changes vs v0.1.9:
+#   - orderer.channel-id / organizations / consensus-type removed;
+#     orderer endpoints + TLS material are now discovered from the
+#     config block referenced by orderer.latest-known-config-block-path.
+#   - bootstrap.genesis-block-file-path removed (replaced by the same path).
+#   - orderer.tls.common-ca-cert-paths remains as a temporary CA fallback.
 #
 # Copyright IBM Corp. All Rights Reserved.
 #
@@ -10,22 +16,15 @@
 
 {{ template "server" . }}
 orderer:
-  channel-id: {{ .ChannelID }}
-  consensus-type: BFT
-  organizations:
-{{- range .OrdererOrganizations }}
-    {{ .Name }}:
-      endpoints:
-{{- range .Endpoints }}
-        - {{ . }}
-{{- end }}
-{{- if .CACertPaths }}
-      ca-cert-paths:
-{{- range .CACertPaths }}
-        - {{ . }}
-{{- end }}
-{{- end }}
-{{- end }}
+  fault-tolerance-level: BFT
+  latest-known-config-block-path: {{ .GenesisBlockPath }}
+  # Workaround for hyperledger/fabric-x-orderer ECDSASigner.Serialize returning
+  # literal "creator" (explicit TODO in node/crypto/signer.go). Without this,
+  # v0.2.0+ committers reject every non-genesis block with
+  # "implicit policy evaluation failed - 0 sub-policies satisfied". Requires
+  # the Built-by-Sign/fabric-x-committer fork (feat/skip-block-signature-verification).
+  # Remove once upstream orderer emits a real MSP-serialized identity.
+  skip-block-signature-verification: true
 {{- if .OrdererTLS }}
   tls:
 {{- if .OrdererTLS.CommonCACertPaths }}
@@ -73,7 +72,5 @@ committer:
 ledger:
   path: {{ .ConfigDir }}/ledger
 last-committed-block-set-interval: 5s
-bootstrap:
-  genesis-block-file-path: {{ .GenesisBlockPath }}
 {{ template "monitoring" . }}
 {{ template "logging" . }}

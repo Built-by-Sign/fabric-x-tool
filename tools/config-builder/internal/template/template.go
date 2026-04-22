@@ -404,31 +404,21 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		}
 		data.SidecarIdentityBCCSP = bccspCfg
 
-		// Collect all orderer assembler endpoints, grouped by orderer org as
-		// expected by fabric-x-committer's orderer.organizations config.
-		ordererTLS := e.getTLSEnabled()
-		for orgIndex, org := range e.config.OrdererOrgs {
-			orgConfig := OrdererOrganizationConfig{Name: org.Name}
-			for _, orderer := range org.Orderers {
-				if orderer.Type == "assembler" {
-					port := orderer.Port
-					if port == 0 {
-						port = config.DefaultOrdererPort(orderer.Type)
+		// v0.2.0 sidecar discovers orderer endpoints + TLS CAs from the config
+		// block (orderer.latest-known-config-block-path → GenesisBlockPath).
+		// Only the sidecar's own client TLS material + a CA fallback list is
+		// still supplied here; orderer.tls.common-ca-cert-paths is kept as a
+		// temporary workaround per upstream ordererdial.TLSConfig.
+		if e.getTLSEnabled() {
+			data.OrdererTLS = e.committerClientTLSConfig()
+			for _, org := range e.config.OrdererOrgs {
+				for _, orderer := range org.Orderers {
+					if orderer.Type != "assembler" {
+						continue
 					}
-					endpoint := fmt.Sprintf("id=%d,deliver,%s:%d", orgIndex+1, dockerHost, port)
-					orgConfig.Endpoints = append(orgConfig.Endpoints, endpoint)
-					if ordererTLS {
-						ordererTLSDir := filepath.Join(containerConfigDir, "tls", "orderers", org.Name, orderer.Name)
-						orgConfig.CACertPaths = append(orgConfig.CACertPaths, filepath.Join(ordererTLSDir, "server.crt"))
-						if data.OrdererTLS == nil {
-							data.OrdererTLS = e.committerClientTLSConfig()
-						}
-						data.OrdererTLS.CommonCACertPaths = append(data.OrdererTLS.CommonCACertPaths, filepath.Join(ordererTLSDir, "ca.crt"))
-					}
+					ordererTLSDir := filepath.Join(containerConfigDir, "tls", "orderers", org.Name, orderer.Name)
+					data.OrdererTLS.CommonCACertPaths = append(data.OrdererTLS.CommonCACertPaths, filepath.Join(ordererTLSDir, "ca.crt"))
 				}
-			}
-			if len(orgConfig.Endpoints) > 0 {
-				data.OrdererOrganizations = append(data.OrdererOrganizations, orgConfig)
 			}
 		}
 		if e.getTLSEnabled() {

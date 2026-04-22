@@ -70,10 +70,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETARCH} \
     xbuild-pure go install \
-        github.com/hyperledger/fabric-x/tools/configtxgen@v0.0.12 \
-        github.com/hyperledger/fabric-x/tools/configtxlator@v0.0.12 \
-        github.com/hyperledger/fabric-x/tools/cryptogen@v0.0.12 && \
-    xbuild-pure go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.0.24 && \
+        github.com/hyperledger/fabric-x/tools/configtxgen@v0.0.15 \
+        github.com/hyperledger/fabric-x/tools/configtxlator@v0.0.15 \
+        github.com/hyperledger/fabric-x/tools/cryptogen@v0.0.15 && \
+    xbuild-pure go install github.com/hyperledger/fabric-x-orderer/cmd/armageddon@v0.1.0 && \
     GOBIN_DIR="$(gobin-dir)" && \
     cp "$GOBIN_DIR/configtxgen" "$GOBIN_DIR/configtxlator" "$GOBIN_DIR/cryptogen" "$GOBIN_DIR/armageddon" /out/
 

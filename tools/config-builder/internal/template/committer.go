@@ -29,7 +29,6 @@ type CommitterTemplateData struct {
 	GenesisBlockPath     string
 	VerifierEndpoints    []EndpointConfig // For coordinator: list of verifier endpoints
 	ValidatorEndpoints   []EndpointConfig // For coordinator: list of validator endpoints
-	OrdererOrganizations []OrdererOrganizationConfig
 	VerifierParallelism  int
 	ServerTLS            *CommitterTLSConfig
 	MonitoringTLS        *CommitterTLSConfig
@@ -44,13 +43,6 @@ type CommitterTemplateData struct {
 	SidecarIdentityMSPID  string
 	SidecarIdentityMSPDir string
 	SidecarIdentityBCCSP  *bccsp.BCCSPConfig
-}
-
-// OrdererOrganizationConfig holds sidecar orderer connection material.
-type OrdererOrganizationConfig struct {
-	Name        string
-	Endpoints   []string
-	CACertPaths []string
 }
 
 // DatabaseConfig holds database configuration

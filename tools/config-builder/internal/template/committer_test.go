@@ -10,7 +10,7 @@ import (
 	"config-builder/internal/config"
 )
 
-func TestSidecarTemplateUsesDedicatedMSPAndOrdererOrganizations(t *testing.T) {
+func TestSidecarTemplateV020Schema(t *testing.T) {
 	cfg := &config.NetworkConfig{
 		ChannelID: "arma",
 		PeerOrgs:  []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}},
@@ -45,16 +45,22 @@ func TestSidecarTemplateUsesDedicatedMSPAndOrdererOrganizations(t *testing.T) {
 	for _, want := range []string{
 		"msp-id: Org1MSP",
 		"msp-dir: /config/msp",
-		"organizations:",
-		"OrdererOrg1:",
-		"- id=1,deliver,host.docker.internal:7053",
+		"fault-tolerance-level: BFT",
+		"latest-known-config-block-path: /config/genesis.block",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered sidecar config missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "connection:") {
-		t.Fatalf("rendered sidecar config should not contain orderer.connection:\n%s", rendered)
+	for _, banned := range []string{
+		"organizations:",
+		"channel-id:",
+		"consensus-type:",
+		"bootstrap:",
+	} {
+		if strings.Contains(rendered, banned) {
+			t.Fatalf("rendered sidecar config still contains v0.1.9 field %q:\n%s", banned, rendered)
+		}
 	}
 }
 
@@ -180,7 +186,6 @@ func TestCommitterTemplatesRenderTLSSections(t *testing.T) {
 	for _, want := range []string{
 		"common-ca-cert-paths:",
 		"- /config/tls/orderers/OrdererOrg1/assembler1/ca.crt",
-		"- /config/tls/orderers/OrdererOrg1/assembler1/server.crt",
 		"endpoint: host.docker.internal:5120",
 		"- /config/tls/coordinator/ca.crt",
 	} {
@@ -188,9 +193,12 @@ func TestCommitterTemplatesRenderTLSSections(t *testing.T) {
 			t.Fatalf("sidecar TLS config missing %q:\n%s", want, sidecarRendered)
 		}
 	}
+	if strings.Contains(sidecarRendered, "/assembler1/server.crt") {
+		t.Fatalf("v0.2.0 sidecar should not pin per-orderer server.crt (loaded from config block):\n%s", sidecarRendered)
+	}
 }
 
-func TestSidecarTLSPathsAreUniqueAcrossOrdererOrganizations(t *testing.T) {
+func TestSidecarCommonCACertPathsSpanAllOrdererOrgs(t *testing.T) {
 	cfg := &config.NetworkConfig{
 		ChannelID: "arma",
 		TLS:       &config.TLSConfig{Enabled: true},
@@ -226,42 +234,12 @@ func TestSidecarTLSPathsAreUniqueAcrossOrdererOrganizations(t *testing.T) {
 	rendered := mustRenderCommitterTemplate(t, engine, "sidecar", data)
 
 	for _, want := range []string{
-		"- /config/tls/orderers/OrdererOrg1/assembler0/server.crt",
-		"- /config/tls/orderers/OrdererOrg2/assembler0/server.crt",
 		"- /config/tls/orderers/OrdererOrg1/assembler0/ca.crt",
 		"- /config/tls/orderers/OrdererOrg2/assembler0/ca.crt",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("sidecar TLS config missing %q:\n%s", want, rendered)
 		}
-	}
-}
-
-func TestSidecarOrdererEndpointUsesAssemblerDefaultPort(t *testing.T) {
-	cfg := &config.NetworkConfig{
-		ChannelID: "arma",
-		PeerOrgs:  []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}},
-		OrdererOrgs: []config.OrdererOrg{{
-			Name: "OrdererOrg1",
-			Orderers: []config.Node{{
-				Name: "assembler0",
-				Type: "assembler",
-			}},
-		}},
-		Committer: &config.CommitterConfig{
-			Components: []config.CommitterNode{{Name: "committer-sidecar", Type: "sidecar", Port: 5130}},
-		},
-	}
-	engine := NewEngine(cfg, t.TempDir(), false)
-
-	data, err := engine.buildCommitterTemplateData("sidecar", &cfg.Committer.Components[0], t.TempDir())
-	if err != nil {
-		t.Fatalf("build sidecar data: %v", err)
-	}
-	rendered := mustRenderCommitterTemplate(t, engine, "sidecar", data)
-
-	if !strings.Contains(rendered, "- id=1,deliver,host.docker.internal:7053") {
-		t.Fatalf("expected default assembler deliver port in sidecar config:\n%s", rendered)
 	}
 }
 
