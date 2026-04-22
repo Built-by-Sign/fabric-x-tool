@@ -12,6 +12,13 @@ import (
 	"config-builder/internal/perms"
 )
 
+// FabricCARootPEMFilename is the filename under each committer component's
+// /config/tls/ directory where the remote Fabric CA's TLS root cert is
+// expected. Referenced by the generated committer config's CACertPaths and
+// by the cbdc-network Makefile fetch-fabric-ca-root target that drops the
+// file in place. Keep the two in sync if renamed.
+const FabricCARootPEMFilename = "fabric-ca-root.pem"
+
 // Engine handles template-based configuration file generation
 type Engine struct {
 	config    *config.NetworkConfig
@@ -452,7 +459,16 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 func (e *Engine) committerServerTLSConfig(containerConfigDir string) *CommitterTLSConfig {
 	tlsConfig := e.committerClientTLSConfig()
 	if e.getTLSClientAuthRequired() {
-		tlsConfig.CACertPaths = []string{filepath.Join(containerConfigDir, "tls", "ca.crt")}
+		// Committer trusts two CAs for incoming mTLS:
+		//   1. ca.crt — cryptogen's tlsCA (signs internal committer/orderer mesh certs)
+		//   2. fabric-ca-root.pem — remote Fabric CA's TLS root (signs biz service
+		//      TLS certs issued via `fabric-ca-client enroll --enrollment.profile=tls`)
+		// fabric-ca-root.pem is dropped into each component's /config/tls/ by the
+		// cbdc-network Makefile fetch-fabric-ca-root target after config-builder runs.
+		tlsConfig.CACertPaths = []string{
+			filepath.Join(containerConfigDir, "tls", "ca.crt"),
+			filepath.Join(containerConfigDir, "tls", FabricCARootPEMFilename),
+		}
 	}
 	return tlsConfig
 }
