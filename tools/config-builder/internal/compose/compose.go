@@ -467,6 +467,10 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			StartPeriod: "10s",
 		}
 	case "validator":
+		// The committer binary's validator subcommand is named "vc" (short for
+		// "validity-committer", the validator's internal component name).
+		// Do not "fix" this to "validator" — upstream cmd/committer/start_cmd.go
+		// defines the subcommand as "vc" and will exit on startup otherwise.
 		service.Command = []string{
 			"start", "vc",
 			"--config", fmt.Sprintf("/config/%s", configFile),

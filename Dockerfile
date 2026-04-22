@@ -81,8 +81,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Kept above the config-builder COPY so edits to local source do not
 # invalidate this layer.
 ARG FABRIC_X_FORK_REF=feat/pkcs11-support
-RUN git clone --branch ${FABRIC_X_FORK_REF} --depth=1 --single-branch \
-    https://github.com/Built-by-Sign/fabric-x.git /build/fabric-x-src
+# SHA pinned for reproducibility. The branch name above is kept for human
+# readability; bump the SHA when the fork is rebased onto upstream.
+ARG FABRIC_X_FORK_SHA=1e5697ed7ef0547b2aa564cdd3baa0dcae4aef6d
+RUN git clone --branch ${FABRIC_X_FORK_REF} --single-branch \
+    https://github.com/Built-by-Sign/fabric-x.git /build/fabric-x-src \
+ && cd /build/fabric-x-src && git checkout ${FABRIC_X_FORK_SHA}
 WORKDIR /build/fabric-x-src/tools/fxconfig
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETARCH} \

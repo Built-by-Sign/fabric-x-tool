@@ -18,12 +18,16 @@
 orderer:
   fault-tolerance-level: BFT
   latest-known-config-block-path: {{ .GenesisBlockPath }}
-  # Workaround for hyperledger/fabric-x-orderer ECDSASigner.Serialize returning
-  # literal "creator" (explicit TODO in node/crypto/signer.go). Without this,
-  # v0.2.0+ committers reject every non-genesis block with
+  # TODO(upstream): remove this flag + fork dependency once fabric-x-orderer
+  # emits a real MSP-serialized identity from ECDSASigner.Serialize (today
+  # it returns the literal string "creator"; see node/crypto/signer.go TODO).
+  # Tracking PRs:
+  #   - hyperledger/fabric-x-committer#552 (our escape hatch upstream)
+  #   - hyperledger/fabric-x-orderer    (needs Serialize fix; no PR yet)
+  # Without this flag, v0.2.0+ committers reject every non-genesis block with
   # "implicit policy evaluation failed - 0 sub-policies satisfied". Requires
-  # the Built-by-Sign/fabric-x-committer fork (feat/skip-block-signature-verification).
-  # Remove once upstream orderer emits a real MSP-serialized identity.
+  # the Built-by-Sign/fabric-x-committer fork (feat/skip-block-signature-verification)
+  # because upstream does not yet accept this key.
   skip-block-signature-verification: true
 {{- if .OrdererTLS }}
   tls:

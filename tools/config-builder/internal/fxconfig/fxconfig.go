@@ -21,8 +21,11 @@ const fxconfigFileName = "fxconfig.yaml"
 // /workspace. Service addresses default to localhost; deployments against a
 // remote network override them via FXCONFIG_*_ADDRESS env vars.
 func Generate(cfg *config.NetworkConfig, outputDir string) error {
+	// fxconfig only makes sense when there is at least one peer org to derive
+	// MSP + mTLS client material from. Orderer-only networks skip silently so
+	// that callers don't need to guard the invocation themselves.
 	if len(cfg.PeerOrgs) == 0 {
-		return fmt.Errorf("fxconfig: network has no peer organizations")
+		return nil
 	}
 
 	absOut, err := filepath.Abs(outputDir)
