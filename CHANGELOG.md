@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.0.9] - 2026-04-23
+
+### Added
+- `fxconfig` 在生成网络时同步输出 `fxconfig.yaml`，便于下游工具直接消费。
+- `config-builder` 将 Fabric CA 的 TLS root 注入 committer 的 trust store。
+- 新增 Apache License 2.0。
+
+### Changed
+- 升级 fabric-x 生态：fabric-x v0.0.15 / armageddon v0.1.0 / committer v0.2.0，
+  并进一步将 armageddon bump 到 v1.0.0-alpha。
+- 集中管理 `config-builder` 中的文件与目录权限常量。
+- 应用 v1.0.0-alpha 升级过程中 code review 的反馈整改。
+
+### Fixed
+- `fxconfig` 输出的 `tls.enabled` 与网络 TLS 配置保持一致。
+- `crypto` 生成的 TLS `server.crt` 改为 leaf-only，兼容 Fabric-X envelope hash。
+
+### Performance
+- Docker builder stage 改为 cross-compile，避免 QEMU 模拟，显著缩短多架构构建耗时。
+
 ## [0.0.8] - 2026-04-20
 
 This release retags `v0.0.8` on top of the continued config-builder and image
@@ -109,7 +129,8 @@ is force-moved; downstream images using `v0.0.8` must be rebuilt.
 - Configured automated Docker image publishing on version tags
 - Added Dockerfile with multi-stage build process
 
-[Unreleased]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.9...HEAD
+[0.0.9]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.3...v0.0.8
 [0.0.3]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/Built-by-Sign/fabric-x-tool/compare/v0.0.1...v0.0.2
