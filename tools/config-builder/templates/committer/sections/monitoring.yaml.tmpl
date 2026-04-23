@@ -1,0 +1,24 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/sections/monitoring.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+{{ define "monitoring" -}}
+{{- if .MonitoringPort }}
+monitoring:
+  endpoint: 0.0.0.0:{{ .MonitoringPort }}
+  rate-limit:
+    requests-per-second: 0
+    burst: 0
+{{- if .MonitoringTLS }}
+  tls:
+    key-path: {{ .MonitoringTLS.KeyPath }}
+    cert-path: {{ .MonitoringTLS.CertPath }}
+    mode: {{ .MonitoringTLS.Mode }}
+{{- if .MonitoringTLS.CACertPaths }}
+    ca-cert-paths:
+{{- range .MonitoringTLS.CACertPaths }}
+      - {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end -}}

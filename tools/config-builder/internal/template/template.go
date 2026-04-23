@@ -4,11 +4,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"text/template"
 
 	"config-builder/internal/bccsp"
 	"config-builder/internal/config"
+	"config-builder/internal/perms"
 )
+
+// FabricCARootPEMFilename is the filename under each committer component's
+// /config/tls/ directory where the remote Fabric CA's TLS root cert is
+// expected. Referenced by the generated committer config's CACertPaths and
+// by the cbdc-network Makefile fetch-fabric-ca-root target that drops the
+// file in place. Keep the two in sync if renamed.
+const FabricCARootPEMFilename = "fabric-ca-root.pem"
 
 // Engine handles template-based configuration file generation
 type Engine struct {
@@ -83,11 +92,10 @@ func (e *Engine) generateOrdererConfigs() error {
 			componentIndex := componentIndices[componentType]
 
 			// Create node config directory following Ansible structure: orderer-{type}-{index}/config/
-			// Ansible uses mode: "0o750" for directories
-			componentDirName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
+				componentDirName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 			nodeConfigDir := filepath.Join(componentDir, "config")
-			if err := os.MkdirAll(nodeConfigDir, 0750); err != nil {
+			if err := os.MkdirAll(nodeConfigDir, perms.Dir); err != nil {
 				return fmt.Errorf("failed to create orderer config directory: %w", err)
 			}
 
@@ -127,26 +135,34 @@ func (e *Engine) generateCommitterConfigs() error {
 	absOutputDir, _ := filepath.Abs(e.outputDir)
 
 	for _, component := range e.config.Committer.Components {
-		// Skip db type - Ansible does not generate config file for database component
-		// Database component only needs data directory, not config file
+		// Skip config file generation for db type. The official Postgres role
+		// does not render a standalone committer config, but it does transfer
+		// TLS material under config/tls when postgres_use_tls is enabled.
 		if component.Type == "db" {
-			// Create data directory for PostgreSQL (will be used by docker-compose)
-			componentDirName := fmt.Sprintf("committer-%s", component.Type)
+			componentDirName := e.config.CommitterComponentDirName(component)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 			dataDir := filepath.Join(componentDir, "data")
-			if err := os.MkdirAll(dataDir, 0750); err != nil {
+			if err := os.MkdirAll(dataDir, perms.Dir); err != nil {
 				return fmt.Errorf("failed to create committer db data directory: %w", err)
+			}
+			if e.getTLSEnabled() {
+				componentConfigDir := filepath.Join(componentDir, "config")
+				if err := os.MkdirAll(componentConfigDir, perms.Dir); err != nil {
+					return fmt.Errorf("failed to create committer db config directory: %w", err)
+				}
+				if err := e.copyCommitterTLS(&component, componentConfigDir); err != nil {
+					return fmt.Errorf("failed to copy committer db TLS for %s: %w", componentDirName, err)
+				}
 			}
 			e.log("Created data directory for committer: %s (%s)", componentDirName, component.Type)
 			continue
 		}
 
 		// Create component config directory following Ansible structure: committer-{type}/config/
-		// Ansible uses mode: "0o750" for directories
-		componentDirName := fmt.Sprintf("committer-%s", component.Type)
+		componentDirName := e.config.CommitterComponentDirName(component)
 		componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 		componentConfigDir := filepath.Join(componentDir, "config")
-		if err := os.MkdirAll(componentConfigDir, 0750); err != nil {
+		if err := os.MkdirAll(componentConfigDir, perms.Dir); err != nil {
 			return fmt.Errorf("failed to create committer config directory: %w", err)
 		}
 
@@ -156,6 +172,21 @@ func (e *Engine) generateCommitterConfigs() error {
 		configPath := filepath.Join(componentConfigDir, configFileName)
 		if err := e.generateCommitterConfig(component.Type, &component, configPath, componentConfigDir); err != nil {
 			return fmt.Errorf("failed to generate config for %s: %w", componentDirName, err)
+		}
+		if component.Type == "validator" || component.Type == "query-service" {
+			if err := e.copyCommitterDatabaseTLS(componentConfigDir); err != nil {
+				return fmt.Errorf("failed to copy committer database TLS for %s: %w", componentDirName, err)
+			}
+		}
+		if e.getTLSEnabled() {
+			if err := e.copyCommitterTLS(&component, componentConfigDir); err != nil {
+				return fmt.Errorf("failed to copy committer TLS for %s: %w", componentDirName, err)
+			}
+		}
+		if component.Type == "coordinator" && e.getTLSEnabled() {
+			if err := e.copyCoordinatorClientTLS(componentConfigDir); err != nil {
+				return fmt.Errorf("failed to copy coordinator client TLS material: %w", err)
+			}
 		}
 
 		// Copy genesis block for sidecar (required for bootstrap)
@@ -167,6 +198,15 @@ func (e *Engine) generateCommitterConfigs() error {
 				return fmt.Errorf("failed to copy genesis block for sidecar: %w", err)
 			}
 			e.log("Copied genesis block for sidecar: %s", genesisBlockDst)
+
+			if err := e.copySidecarMSP(&component, componentConfigDir); err != nil {
+				return fmt.Errorf("failed to copy sidecar MSP for %s: %w", componentDirName, err)
+			}
+			if e.getTLSEnabled() {
+				if err := e.copySidecarClientTLS(componentConfigDir); err != nil {
+					return fmt.Errorf("failed to copy sidecar client TLS material: %w", err)
+				}
+			}
 		}
 
 		e.log("Generated config for committer: %s (%s)", componentDirName, component.Type)
@@ -177,64 +217,63 @@ func (e *Engine) generateCommitterConfigs() error {
 
 // generateOrdererConfig generates a configuration file for an orderer node
 func (e *Engine) generateOrdererConfig(ordererType string, org *config.OrdererOrg, node *config.Node, configPath, configDir, cryptoDir, genesisDir string, partyID int) error {
-	// Build template data (pass partyID)
-	data := e.buildOrdererTemplateData(ordererType, org, node, configDir, cryptoDir, genesisDir, partyID)
+	data, err := e.buildOrdererTemplateData(ordererType, org, node, configDir, cryptoDir, genesisDir, partyID)
+	if err != nil {
+		return err
+	}
 
-	// Get template based on orderer type
 	tmpl, err := e.getOrdererTemplate(ordererType)
 	if err != nil {
 		return err
 	}
 
-	// Execute template
 	return e.executeTemplate(tmpl, data, configPath)
 }
 
 // generateCommitterConfig generates a configuration file for a committer component
 func (e *Engine) generateCommitterConfig(componentType string, component *config.CommitterNode, configPath, configDir string) error {
-	// Build template data
-	data := e.buildCommitterTemplateData(componentType, component, configDir)
+	data, err := e.buildCommitterTemplateData(componentType, component, configDir)
+	if err != nil {
+		return err
+	}
 
-	// Get template based on component type
 	tmpl, err := e.getCommitterTemplate(componentType)
 	if err != nil {
 		return err
 	}
 
-	// Execute template
 	return e.executeTemplate(tmpl, data, configPath)
 }
 
 // buildOrdererTemplateData builds template data for orderer nodes
-func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.OrdererOrg, node *config.Node, configDir, cryptoDir, genesisDir string, partyID int) *OrdererTemplateData {
+func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.OrdererOrg, node *config.Node, configDir, cryptoDir, genesisDir string, partyID int) (*OrdererTemplateData, error) {
 	// Use container path for configDir (matches Ansible's orderer_docker_config_dir = "/config")
 	// The configDir parameter is the host path, but we need container paths in the config file
 	containerConfigDir := "/config"
 
-	// Generate BCCSP configuration based on KMS settings
-	var bccsConfig *bccsp.BCCSPConfig
-	if e.config.KMS != nil && e.config.KMS.Enabled {
-		// KMS mode: use KMS PKCS11 library with organization-level PIN
-		// Priority: org.KMSUserPin > node.UserPin (backward compatibility)
-		orgPin := org.KMSUserPin
-		if orgPin == "" {
-			orgPin = node.UserPin // Backward compatibility
+	bccsConfig, err := e.buildBCCSPConfig(org.KMSTokenLabel, func() (string, error) {
+		pin, err := org.ResolveKMSUserPin()
+		if err != nil {
+			return "", err
 		}
-		// KMS mode: use unified token label from KMS config, not org-specific label
-		tokenLabel := e.config.KMS.TokenLabel
-		if tokenLabel == "" {
-			tokenLabel = "tk" // Default KMS token label
+		if node.UserPin != "" {
+			return node.UserPin, nil
 		}
-		bccsConfig = bccsp.GenerateKMSConfig(e.config.KMS.Endpoint, tokenLabel, orgPin)
-	} else {
-		// Software mode
-		bccsConfig = bccsp.GenerateSoftwareConfig()
+		return pin, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("orderer org %q: %w", org.Name, err)
+	}
+
+	listenPort := node.Port
+	if listenPort == 0 {
+		listenPort = config.DefaultOrdererPort(node.Type)
 	}
 
 	// Auto-calculate monitoring port if not specified
 	monPort := node.MonitoringPort
 	if monPort == 0 {
-		monPort = config.DefaultMonitoringPort(node.Port)
+		monPort = config.DefaultMonitoringPort(listenPort)
 	}
 
 	data := &OrdererTemplateData{
@@ -245,7 +284,7 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		CryptoDir:               cryptoDir,
 		GenesisDir:              genesisDir,
 		ListenAddress:           "0.0.0.0",
-		ListenPort:              node.Port,
+		ListenPort:              listenPort,
 		MonitoringListenAddress: "0.0.0.0",
 		MonitoringListenPort:    monPort,
 		MSPID:                   org.Name,
@@ -260,7 +299,25 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		},
 	}
 
-	return data
+	return data, nil
+}
+
+// buildBCCSPConfig returns a BCCSP config honoring KMS.Enabled.
+// When KMS is enabled, resolvePin is invoked to get the per-identity PIN;
+// otherwise the software provider is returned.
+func (e *Engine) buildBCCSPConfig(orgTokenLabel string, resolvePin func() (string, error)) (*bccsp.BCCSPConfig, error) {
+	if e.config.KMS == nil || !e.config.KMS.Enabled {
+		return bccsp.GenerateSoftwareConfig(), nil
+	}
+	pin, err := resolvePin()
+	if err != nil {
+		return nil, err
+	}
+	tokenLabel, err := e.config.ResolveKMSTokenLabel(orgTokenLabel)
+	if err != nil {
+		return nil, err
+	}
+	return bccsp.GenerateKMSConfig(e.config.KMS.Endpoint, tokenLabel, pin), nil
 }
 
 // monitoringPort returns the monitoring port for a committer component,
@@ -273,7 +330,7 @@ func monitoringPort(c *config.CommitterNode) int {
 }
 
 // buildCommitterTemplateData builds template data for committer components
-func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) *CommitterTemplateData {
+func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) (*CommitterTemplateData, error) {
 	// Use container path for configDir (matches Ansible's committer_docker_config_dir = "/config")
 	containerConfigDir := "/config"
 
@@ -291,6 +348,10 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		ChannelID:        e.config.ChannelID,
 		GenesisBlockPath: filepath.Join(containerConfigDir, "genesis.block"), // Container path
 	}
+	if componentType != "db" && e.getTLSEnabled() {
+		data.ServerTLS = e.committerServerTLSConfig(containerConfigDir)
+		data.MonitoringTLS = e.committerServerTLSConfig(containerConfigDir)
+	}
 
 	// Collect verifier and validator endpoints for coordinator
 	if componentType == "coordinator" {
@@ -306,6 +367,17 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 					Port: comp.Port,
 				})
 			}
+		}
+		if e.getTLSEnabled() {
+			data.VerifierTLS = e.committerClientTLSConfig(filepath.Join(containerConfigDir, "tls", "verifiers", "ca.crt"))
+			data.ValidatorTLS = e.committerClientTLSConfig(filepath.Join(containerConfigDir, "tls", "validators", "ca.crt"))
+		}
+	}
+
+	if componentType == "verifier" {
+		data.VerifierParallelism = runtime.NumCPU() * 2
+		if data.VerifierParallelism == 0 {
+			data.VerifierParallelism = 4
 		}
 	}
 
@@ -323,16 +395,41 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 			data.CommitterPort = 5300 // Default coordinator port
 		}
 
-		// Collect all orderer assembler endpoints
-		for _, org := range e.config.OrdererOrgs {
-			for _, orderer := range org.Orderers {
-				if orderer.Type == "assembler" {
-					data.AssemblerEndpoints = append(data.AssemblerEndpoints, EndpointConfig{
-						Host: dockerHost,
-						Port: orderer.Port,
-					})
+		// Populate the sidecar's dedicated peer MSP identity, matching the
+		// Ansible collection model: the sidecar represents a configured peer
+		// org and signs deliver requests with its own MSP under /config/msp.
+		org, _, err := e.config.ResolveSidecarIdentity(component.Name)
+		if err != nil {
+			return nil, err
+		}
+		data.SidecarIdentityMSPID = config.DeriveMSPID(org.Name)
+		data.SidecarIdentityMSPDir = filepath.Join(containerConfigDir, "msp")
+
+		bccspCfg, err := e.buildBCCSPConfig(org.KMSTokenLabel, org.ResolveKMSUserPin)
+		if err != nil {
+			return nil, fmt.Errorf("sidecar identity for peer org %q: %w", org.Name, err)
+		}
+		data.SidecarIdentityBCCSP = bccspCfg
+
+		// v0.2.0 sidecar discovers orderer endpoints + TLS CAs from the config
+		// block (orderer.latest-known-config-block-path → GenesisBlockPath).
+		// Only the sidecar's own client TLS material + a CA fallback list is
+		// still supplied here; orderer.tls.common-ca-cert-paths is kept as a
+		// temporary workaround per upstream ordererdial.TLSConfig.
+		if e.getTLSEnabled() {
+			data.OrdererTLS = e.committerClientTLSConfig()
+			for _, org := range e.config.OrdererOrgs {
+				for _, orderer := range org.Orderers {
+					if orderer.Type != "assembler" {
+						continue
+					}
+					ordererTLSDir := filepath.Join(containerConfigDir, "tls", "orderers", org.Name, orderer.Name)
+					data.OrdererTLS.CommonCACertPaths = append(data.OrdererTLS.CommonCACertPaths, filepath.Join(ordererTLSDir, "ca.crt"))
 				}
 			}
+		}
+		if e.getTLSEnabled() {
+			data.CommitterTLS = e.committerClientTLSConfig(filepath.Join(containerConfigDir, "tls", "coordinator", "ca.crt"))
 		}
 	}
 
@@ -340,40 +437,255 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 	if componentType == "db" {
 		// Database component itself
 		data.Database = &DatabaseConfig{
-			Type:     "postgres",
-			Host:     component.Host,
-			Port:     component.Port,
-			User:     component.PostgresUser,
-			Password: component.PostgresPassword,
-			DBName:   component.PostgresDB,
+			Type:      "postgres",
+			Endpoints: []string{fmt.Sprintf("%s:%d", component.Host, component.Port)},
+			User:      component.PostgresUser,
+			Password:  component.PostgresPassword,
+			DBName:    component.PostgresDB,
 		}
-	} else if (componentType == "validator" || componentType == "query-service") && e.config.Committer.UsePostgres {
-		// Find database component
-		for _, comp := range e.config.Committer.Components {
-			if comp.Type == "db" {
-				// Ansible uses: {{ hostvars[db].ansible_host }}:{{ hostvars[db].postgres_port }}
-				// On macOS, ansible_host is "host.docker.internal", postgres_port is the host port (5435)
-				// This allows containers to access the database through Docker Desktop's special network
-				// Use dockerHost (host.docker.internal) and comp.Port (host port, e.g., 5435)
-				dbPort := comp.Port  // Use host port (e.g., 5435) as Ansible does
-				dbHost := dockerHost // Use host.docker.internal (matches Ansible's ansible_host)
-				data.Database = &DatabaseConfig{
-					Type:     "postgres",
-					Host:     dbHost, // host.docker.internal (matches Ansible)
-					Port:     dbPort, // Host port (5435) as Ansible uses postgres_port
-					User:     comp.PostgresUser,
-					Password: comp.PostgresPassword,
-					DBName:   comp.PostgresDB,
-				}
-				break
-			}
+	} else if componentType == "validator" || componentType == "query-service" {
+		dbCfg, err := e.buildCommitterDatabaseConfig(dockerHost)
+		if err != nil {
+			return nil, err
 		}
+		data.Database = dbCfg
 	}
 
-	return data
+	return data, nil
 }
 
 // Helper functions
+
+func (e *Engine) committerServerTLSConfig(containerConfigDir string) *CommitterTLSConfig {
+	tlsConfig := e.committerClientTLSConfig()
+	if e.getTLSClientAuthRequired() {
+		// Committer trusts two CAs for incoming mTLS:
+		//   1. ca.crt — cryptogen's tlsCA (signs internal committer/orderer mesh certs)
+		//   2. fabric-ca-root.pem — remote Fabric CA's TLS root (signs biz service
+		//      TLS certs issued via `fabric-ca-client enroll --enrollment.profile=tls`)
+		// fabric-ca-root.pem is dropped into each component's /config/tls/ by the
+		// cbdc-network Makefile fetch-fabric-ca-root target after config-builder runs.
+		tlsConfig.CACertPaths = []string{
+			filepath.Join(containerConfigDir, "tls", "ca.crt"),
+			filepath.Join(containerConfigDir, "tls", FabricCARootPEMFilename),
+		}
+	}
+	return tlsConfig
+}
+
+func (e *Engine) buildCommitterDatabaseConfig(dockerHost string) (*DatabaseConfig, error) {
+	if e.config.Committer == nil {
+		return nil, nil
+	}
+	if e.config.Committer.Database != nil {
+		db := e.config.Committer.Database
+		dbType := e.config.ResolveCommitterDatabaseType()
+		loadBalance := dbType == "yugabyte"
+		if db.LoadBalance != nil {
+			loadBalance = *db.LoadBalance
+		}
+		tablePreSplitTablets := db.TablePreSplitTablets
+		if dbType == "yugabyte" && tablePreSplitTablets == 0 {
+			tablePreSplitTablets = len(db.Endpoints)
+		}
+		cfg := &DatabaseConfig{
+			Type:                 dbType,
+			Endpoints:            make([]string, 0, len(db.Endpoints)),
+			User:                 db.Username,
+			Password:             db.Password,
+			DBName:               db.Database,
+			LoadBalance:          loadBalance,
+			TablePreSplitTablets: tablePreSplitTablets,
+		}
+		for _, endpoint := range db.Endpoints {
+			cfg.Endpoints = append(cfg.Endpoints, fmt.Sprintf("%s:%d", endpoint.Host, endpoint.Port))
+		}
+		if db.TLS != nil && db.TLS.Enabled {
+			cfg.TLS = &DatabaseTLSConfig{
+				Mode:       "tls",
+				CACertPath: filepath.Join("/config", "tls", "db", "ca.crt"),
+			}
+		}
+		return cfg, nil
+	}
+	if !e.config.Committer.UsePostgres {
+		return nil, nil
+	}
+	for _, comp := range e.config.Committer.Components {
+		if comp.Type == "db" {
+			dbPort := comp.Port
+			if dbPort == 0 {
+				dbPort = 5432
+			}
+			cfg := &DatabaseConfig{
+				Type:        "postgres",
+				Endpoints:   []string{fmt.Sprintf("%s:%d", dockerHost, dbPort)},
+				User:        comp.PostgresUser,
+				Password:    comp.PostgresPassword,
+				DBName:      comp.PostgresDB,
+				LoadBalance: false,
+			}
+			if e.getTLSEnabled() {
+				cfg.TLS = &DatabaseTLSConfig{
+					Mode:       "tls",
+					CACertPath: filepath.Join("/config", "tls", "db", "ca.crt"),
+				}
+			}
+			return cfg, nil
+		}
+	}
+	return nil, fmt.Errorf("committer.use_postgres is enabled but no db component was found")
+}
+
+func (e *Engine) committerClientTLSConfig(caCertPaths ...string) *CommitterTLSConfig {
+	mode := "tls"
+	if e.getTLSClientAuthRequired() {
+		mode = "mtls"
+	}
+	return &CommitterTLSConfig{
+		Mode:        mode,
+		KeyPath:     filepath.Join("/config", "tls", "server.key"),
+		CertPath:    filepath.Join("/config", "tls", "server.crt"),
+		CACertPaths: caCertPaths,
+	}
+}
+
+func (e *Engine) copyCommitterDatabaseTLS(componentConfigDir string) error {
+	if e.config.Committer == nil {
+		return nil
+	}
+	if e.config.Committer.Database != nil {
+		if e.config.Committer.Database.TLS == nil || !e.config.Committer.Database.TLS.Enabled {
+			return nil
+		}
+		return e.copyFile(
+			e.config.Committer.Database.TLS.CACertPath,
+			filepath.Join(componentConfigDir, "tls", "db", "ca.crt"),
+		)
+	}
+	if !e.getTLSEnabled() {
+		return nil
+	}
+	dbComponent := e.firstCommitterComponentByType("db")
+	if dbComponent == nil {
+		return nil
+	}
+	return e.copyCommitterCACert(dbComponent, filepath.Join(componentConfigDir, "tls", "db", "ca.crt"))
+}
+
+func (e *Engine) copyCommitterTLS(component *config.CommitterNode, componentConfigDir string) error {
+	org, identityName, err := e.config.ResolveCommitterCryptoIdentity(component.Name, component.Type)
+	if err != nil {
+		return err
+	}
+	srcTLS := e.peerTLSDir(org, identityName)
+	dstTLS := filepath.Join(componentConfigDir, "tls")
+	if err := e.copyDir(srcTLS, dstTLS); err != nil {
+		return fmt.Errorf("copy %s to %s: %w", srcTLS, dstTLS, err)
+	}
+	e.log("Copied committer TLS for %s: %s", component.Name, dstTLS)
+	return nil
+}
+
+func (e *Engine) copyCoordinatorClientTLS(componentConfigDir string) error {
+	if verifier := e.firstCommitterComponentByType("verifier"); verifier != nil {
+		if err := e.copyCommitterCACert(verifier, filepath.Join(componentConfigDir, "tls", "verifiers", "ca.crt")); err != nil {
+			return fmt.Errorf("verifier CA: %w", err)
+		}
+	}
+	if validator := e.firstCommitterComponentByType("validator"); validator != nil {
+		if err := e.copyCommitterCACert(validator, filepath.Join(componentConfigDir, "tls", "validators", "ca.crt")); err != nil {
+			return fmt.Errorf("validator CA: %w", err)
+		}
+	}
+	return nil
+}
+
+func (e *Engine) copySidecarClientTLS(componentConfigDir string) error {
+	for _, org := range e.config.OrdererOrgs {
+		for _, orderer := range org.Orderers {
+			if orderer.Type != "assembler" {
+				continue
+			}
+			srcTLS := e.ordererTLSDir(&org, &orderer)
+			dstDir := filepath.Join(componentConfigDir, "tls", "orderers", org.Name, orderer.Name)
+			if err := e.copyFile(filepath.Join(srcTLS, "ca.crt"), filepath.Join(dstDir, "ca.crt")); err != nil {
+				return fmt.Errorf("orderer %s CA: %w", orderer.Name, err)
+			}
+			if err := e.copyFile(filepath.Join(srcTLS, "server.crt"), filepath.Join(dstDir, "server.crt")); err != nil {
+				return fmt.Errorf("orderer %s server cert: %w", orderer.Name, err)
+			}
+		}
+	}
+	if coordinator := e.firstCommitterComponentByType("coordinator"); coordinator != nil {
+		if err := e.copyCommitterCACert(coordinator, filepath.Join(componentConfigDir, "tls", "coordinator", "ca.crt")); err != nil {
+			return fmt.Errorf("coordinator CA: %w", err)
+		}
+	}
+	return nil
+}
+
+func (e *Engine) copyCommitterCACert(component *config.CommitterNode, dst string) error {
+	org, identityName, err := e.config.ResolveCommitterCryptoIdentity(component.Name, component.Type)
+	if err != nil {
+		return err
+	}
+	return e.copyFile(filepath.Join(e.peerTLSDir(org, identityName), "ca.crt"), dst)
+}
+
+func (e *Engine) firstCommitterComponentByType(componentType string) *config.CommitterNode {
+	if e.config.Committer == nil {
+		return nil
+	}
+	for i := range e.config.Committer.Components {
+		if e.config.Committer.Components[i].Type == componentType {
+			return &e.config.Committer.Components[i]
+		}
+	}
+	return nil
+}
+
+func (e *Engine) peerTLSDir(org *config.PeerOrg, identityName string) string {
+	absOutputDir, _ := filepath.Abs(e.outputDir)
+	cryptoArtifactsDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts")
+	identityFQDN := fmt.Sprintf("%s.%s", identityName, org.Domain)
+	srcTLS := filepath.Join(cryptoArtifactsDir, "crypto", "peerOrganizations", org.Domain, "peers", identityFQDN, "tls")
+	if _, err := os.Stat(srcTLS); os.IsNotExist(err) {
+		srcTLS = filepath.Join(cryptoArtifactsDir, "peerOrganizations", org.Domain, "peers", identityFQDN, "tls")
+	}
+	return srcTLS
+}
+
+func (e *Engine) ordererTLSDir(org *config.OrdererOrg, orderer *config.Node) string {
+	absOutputDir, _ := filepath.Abs(e.outputDir)
+	cryptoArtifactsDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts")
+	ordererFQDN := fmt.Sprintf("%s.%s", orderer.Name, org.Domain)
+	srcTLS := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "orderers", ordererFQDN, "tls")
+	if _, err := os.Stat(srcTLS); os.IsNotExist(err) {
+		srcTLS = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "orderers", ordererFQDN, "tls")
+	}
+	return srcTLS
+}
+
+func (e *Engine) copySidecarMSP(component *config.CommitterNode, componentConfigDir string) error {
+	org, identityName, err := e.config.ResolveSidecarIdentity(component.Name)
+	if err != nil {
+		return err
+	}
+	absOutputDir, _ := filepath.Abs(e.outputDir)
+	cryptoArtifactsDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts")
+	identityFQDN := fmt.Sprintf("%s.%s", identityName, org.Domain)
+	srcMSP := filepath.Join(cryptoArtifactsDir, "crypto", "peerOrganizations", org.Domain, "peers", identityFQDN, "msp")
+	if _, err := os.Stat(srcMSP); os.IsNotExist(err) {
+		srcMSP = filepath.Join(cryptoArtifactsDir, "peerOrganizations", org.Domain, "peers", identityFQDN, "msp")
+	}
+	dstMSP := filepath.Join(componentConfigDir, "msp")
+	if err := e.copyDir(srcMSP, dstMSP); err != nil {
+		return fmt.Errorf("copy %s to %s: %w", srcMSP, dstMSP, err)
+	}
+	e.log("Copied sidecar MSP for %s: %s", component.Name, dstMSP)
+	return nil
+}
 
 func (e *Engine) getTLSEnabled() bool {
 	if e.config.TLS != nil {
@@ -390,9 +702,7 @@ func (e *Engine) getTLSClientAuthRequired() bool {
 }
 
 func (e *Engine) copyFile(src, dst string) error {
-	// Create destination directory if needed
-	// Ansible uses mode: "0o750" for directories
-	if err := os.MkdirAll(filepath.Dir(dst), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), perms.Dir); err != nil {
 		return err
 	}
 
@@ -402,14 +712,11 @@ func (e *Engine) copyFile(src, dst string) error {
 		return err
 	}
 
-	// Write destination file
-	// For genesis.block and other data files, use 0o644 (rw-r--r--)
-	// For sensitive files like private keys, preserve original permissions
-	perm := os.FileMode(0644)
+	// Default to the shared public-file permission; if the source is restricted
+	// (e.g. private key at 0600), preserve that mode so secrets stay secrets.
+	perm := perms.FileConfig
 	if info, err := os.Stat(src); err == nil {
-		// Preserve original permissions for sensitive files (like private keys)
-		if info.Mode().Perm()&0077 == 0 {
-			// If original file has no group/other permissions, preserve it
+		if info.Mode().Perm()&0o077 == 0 {
 			perm = info.Mode().Perm()
 		}
 	}
@@ -506,9 +813,9 @@ func (e *Engine) executeTemplate(tmpl *template.Template, data interface{}, outp
 		return err
 	}
 
-	// Set file permissions to match Ansible: 0o640 (rw-r-----) for config files
-	// Ansible uses mode: "0o640" for node_config.yaml and config-*.yml files
-	if err := os.Chmod(outputPath, 0640); err != nil {
+	// World-readable so the generated tree can be copied to other hosts and
+	// consumed by container processes running under any UID/GID.
+	if err := os.Chmod(outputPath, perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 

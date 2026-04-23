@@ -20,73 +20,6 @@ func getDefaultHost() string {
 	return "localhost"
 }
 
-// sharedConfigTemplate is the template for generating shared_config.yaml
-const sharedConfigTemplate = `#
-# Copyright IBM Corp. All Rights Reserved.
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-
-Parties:{{range .Parties}}
-  - PartyID: {{.PartyID}}
-    CACerts:{{range .CACerts}}
-      - {{.}}{{end}}
-    TLSCACerts:{{range .TLSCACerts}}
-      - {{.}}{{end}}
-    RouterConfig:
-      TLSCert: {{.RouterConfig.TLSCert}}
-      Host: {{.RouterConfig.Host}}
-      Port: {{.RouterConfig.Port}}
-    BatchersConfig:{{range .BatchersConfig}}
-      - ShardID: {{.ShardID}}
-        SignCert: {{.SignCert}}
-        TLSCert: {{.TLSCert}}
-        Host: {{.Host}}
-        Port: {{.Port}}{{end}}
-    ConsenterConfig:
-      SignCert: {{.ConsenterConfig.SignCert}}
-      TLSCert: {{.ConsenterConfig.TLSCert}}
-      Host: {{.ConsenterConfig.Host}}
-      Port: {{.ConsenterConfig.Port}}
-    AssemblerConfig:
-      TLSCert: {{.AssemblerConfig.TLSCert}}
-      Host: {{.AssemblerConfig.Host}}
-      Port: {{.AssemblerConfig.Port}}{{end}}
-Consensus:
-    SmartBFT:
-        selfid: 0
-        requestbatchmaxcount: 100
-        requestbatchmaxbytes: 10485760
-        requestbatchmaxinterval: 500ms
-        incomingmessagebuffersize: 200
-        requestpoolsize: 400
-        requestforwardtimeout: 10s
-        requestcomplaintimeout: 20s
-        requestautoremovetimeout: 3m0s
-        viewchangeresendinterval: 5s
-        viewchangetimeout: 20s
-        leaderheartbeattimeout: 1m0s
-        leaderheartbeatcount: 10
-        numofticksbehindbeforesyncing: 10
-        collecttimeout: 1s
-        synconstart: false
-        speedupviewchange: false
-        leaderrotation: false
-        decisionsperleader: 0
-        requestmaxbytes: 10240
-        requestpoolsubmittimeout: 5s
-Batching:
-    BatchTimeouts:
-        BatchCreationTimeout: 500ms
-        FirstStrikeThreshold: 10s
-        SecondStrikeThreshold: 10s
-        AutoRemoveTimeout: 10s
-    BatchSize:
-        MaxMessageCount: 10000
-        AbsoluteMaxBytes: 10485760
-    RequestMaxBytes: 1048576
-`
-
 // TemplateData holds data for shared_config.yaml template
 type TemplateData struct {
 	Parties []PartyData
@@ -161,7 +94,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 
 		// Find nodes for this organization
 		var routerNode *config.Node
-		var batcherNode *config.Node
+		var batcherNodes []*config.Node
 		var consenterNode *config.Node
 		var assemblerNode *config.Node
 
@@ -171,8 +104,8 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			case "router":
 				routerNode = node
 			case "batcher":
-				batcherNode = node
-			case "consenter":
+				batcherNodes = append(batcherNodes, node)
+			case "consensus":
 				consenterNode = node
 			case "assembler":
 				assemblerNode = node
@@ -202,7 +135,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := routerNode.Port
 			if port == 0 {
-				port = 7050
+				port = config.DefaultOrdererPort(routerNode.Type)
 			}
 
 			party.RouterConfig = RouterConfig{
@@ -220,11 +153,11 @@ func (g *Generator) buildTemplateData() *TemplateData {
 
 			host := consenterNode.Host
 			if host == "" {
-				host = "localhost"
+				host = getDefaultHost()
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.RouterConfig = RouterConfig{
@@ -235,38 +168,39 @@ func (g *Generator) buildTemplateData() *TemplateData {
 		}
 
 		// Batcher config
-		if batcherNode != nil {
-			batcherFQDN := fmt.Sprintf("%s.%s", batcherNode.Name, org.Domain)
+		if len(batcherNodes) > 0 {
+			party.BatchersConfig = make([]BatcherConfig, 0, len(batcherNodes))
+			for _, batcherNode := range batcherNodes {
+				batcherFQDN := fmt.Sprintf("%s.%s", batcherNode.Name, org.Domain)
 
-			signCertPath := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "msp", "signcerts", fmt.Sprintf("%s-cert.pem", batcherFQDN))
-			if _, err := os.Stat(signCertPath); os.IsNotExist(err) {
-				signCertPath = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "msp", "signcerts", fmt.Sprintf("%s-cert.pem", batcherFQDN))
-			}
+				signCertPath := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "msp", "signcerts", fmt.Sprintf("%s-cert.pem", batcherFQDN))
+				if _, err := os.Stat(signCertPath); os.IsNotExist(err) {
+					signCertPath = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "msp", "signcerts", fmt.Sprintf("%s-cert.pem", batcherFQDN))
+				}
 
-			tlsCertPath := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "tls", "server.crt")
-			if _, err := os.Stat(tlsCertPath); os.IsNotExist(err) {
-				tlsCertPath = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "tls", "server.crt")
-			}
+				tlsCertPath := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "tls", "server.crt")
+				if _, err := os.Stat(tlsCertPath); os.IsNotExist(err) {
+					tlsCertPath = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "orderers", batcherFQDN, "tls", "server.crt")
+				}
 
-			// Use node.Host (corresponds to Ansible's ansible_host)
-			// If empty, use OS-dependent default (macOS: host.docker.internal, Linux: localhost)
-			host := batcherNode.Host
-			if host == "" {
-				host = getDefaultHost()
-			}
-			port := batcherNode.Port
-			if port == 0 {
-				port = 7051
-			}
+				// Use node.Host (corresponds to Ansible's ansible_host)
+				// If empty, use OS-dependent default (macOS: host.docker.internal, Linux: localhost)
+				host := batcherNode.Host
+				if host == "" {
+					host = getDefaultHost()
+				}
+				port := batcherNode.Port
+				if port == 0 {
+					port = config.DefaultOrdererPort(batcherNode.Type)
+				}
 
-			party.BatchersConfig = []BatcherConfig{
-				{
+				party.BatchersConfig = append(party.BatchersConfig, BatcherConfig{
 					ShardID:  batcherNode.ShardID,
 					SignCert: signCertPath,
 					TLSCert:  tlsCertPath,
 					Host:     host,
 					Port:     port,
-				},
+				})
 			}
 		} else if consenterNode != nil {
 			// Fallback to consenter if no batcher
@@ -284,11 +218,11 @@ func (g *Generator) buildTemplateData() *TemplateData {
 
 			host := consenterNode.Host
 			if host == "" {
-				host = "localhost"
+				host = getDefaultHost()
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.BatchersConfig = []BatcherConfig{
@@ -324,7 +258,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.ConsenterConfig = ConsenterConfig{
@@ -352,7 +286,7 @@ func (g *Generator) buildTemplateData() *TemplateData {
 			}
 			port := assemblerNode.Port
 			if port == 0 {
-				port = 7053
+				port = config.DefaultOrdererPort(assemblerNode.Type)
 			}
 
 			party.AssemblerConfig = AssemblerConfig{
@@ -371,11 +305,11 @@ func (g *Generator) buildTemplateData() *TemplateData {
 
 			host := consenterNode.Host
 			if host == "" {
-				host = "localhost"
+				host = getDefaultHost()
 			}
 			port := consenterNode.Port
 			if port == 0 {
-				port = 7052
+				port = config.DefaultOrdererPort(consenterNode.Type)
 			}
 
 			party.AssemblerConfig = AssemblerConfig{

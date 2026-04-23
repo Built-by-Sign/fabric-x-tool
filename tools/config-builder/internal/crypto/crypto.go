@@ -1,14 +1,15 @@
 package crypto
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"config-builder/internal/config"
-
-	"gopkg.in/yaml.v3"
+	"config-builder/internal/perms"
+	templatefiles "config-builder/templates"
 )
 
 // Generator handles crypto material generation
@@ -112,23 +113,24 @@ func (g *Generator) generateCryptoConfig() (string, error) {
 	}
 
 	configDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, perms.Dir); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)
 	}
 
 	configPath := filepath.Join(configDir, "crypto-config.yaml")
 
-	// Build crypto-config structure
-	cryptoConfig := g.buildCryptoConfig()
-
-	// Marshal to YAML
-	data, err := yaml.Marshal(cryptoConfig)
+	tmpl, err := templatefiles.Parse("crypto/crypto-config.yaml.tmpl", nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal crypto config: %w", err)
+		return "", fmt.Errorf("failed to parse crypto config template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, g.buildCryptoConfig()); err != nil {
+		return "", fmt.Errorf("failed to render crypto config template: %w", err)
 	}
 
 	// Write to file
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, buf.Bytes(), perms.FileConfig); err != nil {
 		return "", fmt.Errorf("failed to write crypto config: %w", err)
 	}
 
@@ -256,30 +258,25 @@ func (g *Generator) convertPeerOrg(org *config.PeerOrg) OrgSpec {
 		Specs:         make([]NodeSpec, 0, len(org.Peers)),
 	}
 
-	// Convert peer nodes to specs
-	// Only add Specs if there are peers defined (matching Ansible behavior)
-	if len(org.Peers) > 0 {
-		for _, node := range org.Peers {
-			// Build FQDN for this peer node
-			peerFQDN := fmt.Sprintf("%s.%s", node.Name, org.Domain)
-
-			nodeSpec := NodeSpec{
-				Hostname: node.Name,
-				// Include FQDN in SANS to support both FQDN and host.docker.internal connections
-				// This fixes TLS certificate validation when connecting via host.docker.internal
-				SANS: []string{
-					peerFQDN, // Add FQDN as first SAN
-					"host.docker.internal",
-					"0.0.0.0",
-					"localhost",
-					"127.0.0.1",
-					"::1",
-				},
-			}
-			spec.Specs = append(spec.Specs, nodeSpec)
-		}
+	// Convert peer nodes to specs. The committer sidecar also gets a peer MSP,
+	// matching the Fabric-X Ansible collection model.
+	peerNames := make([]string, 0, len(org.Peers))
+	seenPeers := make(map[string]struct{})
+	for _, node := range org.Peers {
+		peerNames = append(peerNames, node.Name)
+		seenPeers[node.Name] = struct{}{}
 	}
-	// If no peers, don't set Specs field (matching Ansible behavior)
+	for _, committerName := range g.committerPeerNamesForOrg(org) {
+		if _, exists := seenPeers[committerName]; exists {
+			continue
+		}
+		peerNames = append(peerNames, committerName)
+		seenPeers[committerName] = struct{}{}
+	}
+	for _, peerName := range peerNames {
+		spec.Specs = append(spec.Specs, peerNodeSpec(peerName, org.Domain))
+	}
+	// If there are no peer or sidecar identities, Specs stays empty.
 
 	// Convert users
 	// Count is the number of users in addition to Admin (matching Ansible behavior)
@@ -303,6 +300,37 @@ func (g *Generator) convertPeerOrg(org *config.PeerOrg) OrgSpec {
 	}
 
 	return spec
+}
+
+func peerNodeSpec(peerName, domain string) NodeSpec {
+	peerFQDN := fmt.Sprintf("%s.%s", peerName, domain)
+	return NodeSpec{
+		Hostname: peerName,
+		// Include FQDN in SANS to support both FQDN and host.docker.internal connections.
+		SANS: []string{
+			peerFQDN,
+			"host.docker.internal",
+			"0.0.0.0",
+			"localhost",
+			"127.0.0.1",
+			"::1",
+		},
+	}
+}
+
+func (g *Generator) committerPeerNamesForOrg(org *config.PeerOrg) []string {
+	if g.config.TLS != nil && g.config.TLS.Enabled {
+		byOrg, err := g.config.ResolveCommitterCryptoIdentitiesByOrg()
+		if err != nil {
+			return nil
+		}
+		return byOrg[org.Name]
+	}
+	byOrg, err := g.config.ResolveSidecarIdentitiesByOrg()
+	if err != nil {
+		return nil
+	}
+	return byOrg[org.Name]
 }
 
 // runCryptogen executes the cryptogen tool via Docker container
@@ -336,7 +364,7 @@ func (g *Generator) runCryptogenLocal(configPath, outputDir, cryptoDir string) e
 	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -375,10 +403,10 @@ func (g *Generator) runCryptogenDocker(configPath, baseDir, tempOutputDir, crypt
 	dockerOutputDir := filepath.Join(dockerConfigDir, "crypto")
 
 	// Ensure directories exist
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
+	if err := os.MkdirAll(baseDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create base directory: %w", err)
 	}
-	if err := os.MkdirAll(tempOutputDir, 0755); err != nil {
+	if err := os.MkdirAll(tempOutputDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create temp output directory: %w", err)
 	}
 
@@ -403,7 +431,7 @@ func (g *Generator) runCryptogenDocker(configPath, baseDir, tempOutputDir, crypt
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
-	if err := os.WriteFile(configInBaseDir, configData, 0644); err != nil {
+	if err := os.WriteFile(configInBaseDir, configData, perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to copy config file to container directory: %w", err)
 	}
 
@@ -433,7 +461,7 @@ func (g *Generator) moveCryptoFiles(tempOutputDir, cryptoDir string) error {
 	// Move generated files from temp directory to crypto/ subdirectory
 	// Cryptogen generates peerOrganizations and ordererOrganizations directly in output dir
 	// We need them in crypto/ subdirectory
-	if err := os.MkdirAll(cryptoDir, 0755); err != nil {
+	if err := os.MkdirAll(cryptoDir, perms.Dir); err != nil {
 		os.RemoveAll(tempOutputDir)
 		return fmt.Errorf("failed to create crypto directory: %w", err)
 	}

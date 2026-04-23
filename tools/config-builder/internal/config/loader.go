@@ -5,8 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"config-builder/internal/perms"
 )
 
 // expandEnvVars replaces ${VAR} or $VAR with environment variable values
@@ -67,6 +70,20 @@ func Load(path string) (*NetworkConfig, error) {
 	if !filepath.IsAbs(config.OutputDir) {
 		config.OutputDir = filepath.Join(config.ProjectDir, config.OutputDir)
 	}
+	if config.Committer != nil && config.Committer.Database != nil &&
+		config.Committer.Database.TLS != nil && config.Committer.Database.TLS.CACertPath != "" &&
+		!filepath.IsAbs(config.Committer.Database.TLS.CACertPath) {
+		configDir := filepath.Dir(path)
+		absConfigDir, err := filepath.Abs(configDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve database tls ca_cert_path: %w", err)
+		}
+		config.Committer.Database.TLS.CACertPath = filepath.Join(absConfigDir, config.Committer.Database.TLS.CACertPath)
+	}
+
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 
 	return config, nil
 }
@@ -78,7 +95,7 @@ func Save(config *NetworkConfig, path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -140,7 +157,128 @@ func (c *NetworkConfig) Validate() error {
 		}
 	}
 
+	if c.HasCommitterSidecar() {
+		for _, component := range c.Committer.Components {
+			if component.Type != "sidecar" {
+				continue
+			}
+			if _, _, err := c.ResolveSidecarIdentity(component.Name); err != nil {
+				return err
+			}
+		}
+	}
+	if c.TLS != nil && c.TLS.Enabled && c.Committer != nil {
+		if _, err := c.ResolveCommitterCryptoIdentitiesByOrg(); err != nil {
+			return err
+		}
+	}
+	if c.Committer != nil {
+		dbComponents := 0
+		componentNames := make(map[string]struct{})
+		validTypes := map[string]struct{}{
+			"db":            {},
+			"validator":     {},
+			"verifier":      {},
+			"coordinator":   {},
+			"sidecar":       {},
+			"query-service": {},
+		}
+		for _, component := range c.Committer.Components {
+			if component.Name == "" {
+				return fmt.Errorf("committer component name is required")
+			}
+			if _, exists := componentNames[component.Name]; exists {
+				return fmt.Errorf("duplicate committer component name %q", component.Name)
+			}
+			componentNames[component.Name] = struct{}{}
+			if _, ok := validTypes[component.Type]; !ok {
+				return fmt.Errorf("unsupported committer component type %q", component.Type)
+			}
+			if component.Type == "db" {
+				dbComponents++
+			}
+		}
+		if dbComponents > 1 {
+			return fmt.Errorf("only one local committer db component is supported")
+		}
+		if c.Committer.Database != nil {
+			if c.Committer.UsePostgres {
+				return fmt.Errorf("committer.database cannot be combined with committer.use_postgres")
+			}
+			if dbComponents > 0 {
+				return fmt.Errorf("committer.database cannot be combined with a local db component")
+			}
+			db := c.Committer.Database
+			dbType := strings.ToLower(strings.TrimSpace(db.Type))
+			if dbType == "" {
+				if len(db.Endpoints) > 1 {
+					dbType = "yugabyte"
+				} else {
+					dbType = "postgres"
+				}
+			}
+			if dbType != "postgres" && dbType != "yugabyte" {
+				return fmt.Errorf("committer.database.type must be postgres or yugabyte")
+			}
+			if len(db.Endpoints) == 0 {
+				return fmt.Errorf("committer.database.endpoints must not be empty")
+			}
+			for i, endpoint := range db.Endpoints {
+				if endpoint.Host == "" || endpoint.Port == 0 {
+					return fmt.Errorf("committer.database.endpoints[%d] requires host and port", i)
+				}
+			}
+			if db.Username == "" || db.Password == "" || db.Database == "" {
+				return fmt.Errorf("committer.database requires username, password, and database")
+			}
+			if db.TLS != nil && db.TLS.Enabled {
+				if db.TLS.CACertPath == "" {
+					return fmt.Errorf("committer.database.tls.ca_cert_path is required when database TLS is enabled")
+				}
+				if _, err := os.Stat(db.TLS.CACertPath); err != nil {
+					return fmt.Errorf("committer.database.tls.ca_cert_path: %w", err)
+				}
+			}
+		}
+		if c.Committer.UsePostgres && dbComponents == 0 {
+			return fmt.Errorf("committer.use_postgres requires a db component")
+		}
+	}
+
+	if c.KMS != nil && c.KMS.Enabled {
+		for i := range c.OrdererOrgs {
+			if _, err := c.OrdererOrgs[i].ResolveKMSUserPin(); err != nil {
+				return err
+			}
+			if _, err := c.ResolveKMSTokenLabel(c.OrdererOrgs[i].KMSTokenLabel); err != nil {
+				return fmt.Errorf("orderer org %q: %w", c.OrdererOrgs[i].Name, err)
+			}
+		}
+		for i := range c.PeerOrgs {
+			if _, err := c.PeerOrgs[i].ResolveKMSUserPin(); err != nil {
+				return err
+			}
+			if _, err := c.ResolveKMSTokenLabel(c.PeerOrgs[i].KMSTokenLabel); err != nil {
+				return fmt.Errorf("peer org %q: %w", c.PeerOrgs[i].Name, err)
+			}
+		}
+	}
+
 	return nil
+}
+
+// ResolveCommitterDatabaseType returns the normalized external database type.
+func (c *NetworkConfig) ResolveCommitterDatabaseType() string {
+	if c.Committer == nil || c.Committer.Database == nil {
+		return ""
+	}
+	if c.Committer.Database.Type != "" {
+		return strings.ToLower(strings.TrimSpace(c.Committer.Database.Type))
+	}
+	if len(c.Committer.Database.Endpoints) > 1 {
+		return "yugabyte"
+	}
+	return "postgres"
 }
 
 // GetOrdererOrg returns the orderer organization by name

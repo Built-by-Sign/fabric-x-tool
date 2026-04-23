@@ -8,7 +8,9 @@ import (
 	"config-builder/internal/armageddon"
 	"config-builder/internal/config"
 	"config-builder/internal/crypto"
+	"config-builder/internal/fxconfig"
 	"config-builder/internal/genesis"
+	"config-builder/internal/perms"
 	"config-builder/internal/template"
 )
 
@@ -67,9 +69,10 @@ func (r *Runner) Run() error {
 		return fmt.Errorf("failed to generate node configurations: %w", err)
 	}
 
-	// Note: fxconfig is no longer built locally.
-	// It should be run via Docker using the DOCKER_TOOLS_IMAGE.
-	// See Makefile targets: create-ns, list-ns
+	// Step 8: Generate fxconfig client configuration (mTLS + service addresses)
+	if err := r.generateFxconfig(); err != nil {
+		return fmt.Errorf("failed to generate fxconfig: %w", err)
+	}
 
 	r.log("Setup completed successfully!")
 	return nil
@@ -101,8 +104,6 @@ func (r *Runner) loadConfig() error {
 		r.log("Using Docker mode (tools will be executed in containers)")
 	}
 
-	// Configuration validation is done during Load()
-
 	r.config = cfg
 	r.logDetails("Configuration loaded successfully")
 	r.logDetails("  Channel ID: %s", cfg.ChannelID)
@@ -127,7 +128,7 @@ func (r *Runner) createDirectories() error {
 	}
 
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, perms.Dir); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 		r.logDetails("  Created: %s", dir)
@@ -185,6 +186,17 @@ func (r *Runner) generateNodeConfigs() error {
 		return err
 	}
 	r.log("Node configurations generated successfully")
+	return nil
+}
+
+// generateFxconfig writes fxconfig.yaml with mTLS client material and service
+// addresses so that fxconfig can be invoked with --config out/fxconfig.yaml.
+func (r *Runner) generateFxconfig() error {
+	r.log("Generating fxconfig client configuration...")
+	if err := fxconfig.Generate(r.config, r.config.OutputDir); err != nil {
+		return err
+	}
+	r.log("fxconfig client configuration generated successfully")
 	return nil
 }
 

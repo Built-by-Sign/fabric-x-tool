@@ -1,0 +1,153 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/cryptogen/templates/crypto-config.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+OrdererOrgs:
+{{- range .OrdererOrgs }}
+  - Name: {{ .Name }}
+    Domain: {{ .Domain }}
+    EnableNodeOUs: {{ .EnableNodeOUs }}
+{{- if .CA }}
+    CA:
+{{- if .CA.Hostname }}
+      Hostname: {{ .CA.Hostname }}
+{{- end }}
+{{- if .CA.CommonName }}
+      CommonName: {{ .CA.CommonName }}
+{{- end }}
+{{- if .CA.SANS }}
+      SANS:
+{{- range .CA.SANS }}
+        - {{ . }}
+{{- end }}
+{{- end }}
+{{- if .CA.PublicKeyAlgorithm }}
+      PublicKeyAlgorithm: {{ .CA.PublicKeyAlgorithm }}
+{{- end }}
+{{- end }}
+{{- if .Template }}
+    Template:
+      Count: {{ .Template.Count }}
+{{- if .Template.Start }}
+      Start: {{ .Template.Start }}
+{{- end }}
+{{- if .Template.Hostname }}
+      Hostname: {{ .Template.Hostname }}
+{{- end }}
+{{- if .Template.SANS }}
+      SANS:
+{{- range .Template.SANS }}
+        - {{ . }}
+{{- end }}
+{{- end }}
+{{- if .Template.PublicKeyAlgorithm }}
+      PublicKeyAlgorithm: {{ .Template.PublicKeyAlgorithm }}
+{{- end }}
+{{- end }}
+{{- if .Specs }}
+    Specs:
+{{- range .Specs }}
+      - Hostname: {{ .Hostname }}
+{{- if .CommonName }}
+        CommonName: {{ .CommonName }}
+{{- end }}
+{{- if .SANS }}
+        SANS:
+{{- range .SANS }}
+          - {{ . }}
+{{- end }}
+{{- end }}
+{{- if .PublicKeyAlgorithm }}
+        PublicKeyAlgorithm: {{ .PublicKeyAlgorithm }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Users }}
+    Users:
+      Count: {{ .Users.Count }}
+{{- if .Users.PublicKeyAlgorithm }}
+      PublicKeyAlgorithm: {{ .Users.PublicKeyAlgorithm }}
+{{- end }}
+{{- if .Users.Specs }}
+      Specs:
+{{- range .Users.Specs }}
+        - Name: {{ .Name }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .PeerOrgs }}
+PeerOrgs:
+{{- range .PeerOrgs }}
+  - Name: {{ .Name }}
+    Domain: {{ .Domain }}
+    EnableNodeOUs: {{ .EnableNodeOUs }}
+{{- if .CA }}
+    CA:
+{{- if .CA.Hostname }}
+      Hostname: {{ .CA.Hostname }}
+{{- end }}
+{{- if .CA.CommonName }}
+      CommonName: {{ .CA.CommonName }}
+{{- end }}
+{{- if .CA.SANS }}
+      SANS:
+{{- range .CA.SANS }}
+        - {{ . }}
+{{- end }}
+{{- end }}
+{{- if .CA.PublicKeyAlgorithm }}
+      PublicKeyAlgorithm: {{ .CA.PublicKeyAlgorithm }}
+{{- end }}
+{{- end }}
+{{- if .Template }}
+    Template:
+      Count: {{ .Template.Count }}
+{{- if .Template.Start }}
+      Start: {{ .Template.Start }}
+{{- end }}
+{{- if .Template.Hostname }}
+      Hostname: {{ .Template.Hostname }}
+{{- end }}
+{{- if .Template.SANS }}
+      SANS:
+{{- range .Template.SANS }}
+        - {{ . }}
+{{- end }}
+{{- end }}
+{{- if .Template.PublicKeyAlgorithm }}
+      PublicKeyAlgorithm: {{ .Template.PublicKeyAlgorithm }}
+{{- end }}
+{{- end }}
+{{- if .Specs }}
+    Specs:
+{{- range .Specs }}
+      - Hostname: {{ .Hostname }}
+{{- if .CommonName }}
+        CommonName: {{ .CommonName }}
+{{- end }}
+{{- if .SANS }}
+        SANS:
+{{- range .SANS }}
+          - {{ . }}
+{{- end }}
+{{- end }}
+{{- if .PublicKeyAlgorithm }}
+        PublicKeyAlgorithm: {{ .PublicKeyAlgorithm }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Users }}
+    Users:
+      Count: {{ .Users.Count }}
+{{- if .Users.PublicKeyAlgorithm }}
+      PublicKeyAlgorithm: {{ .Users.PublicKeyAlgorithm }}
+{{- end }}
+{{- if .Users.Specs }}
+      Specs:
+{{- range .Users.Specs }}
+        - Name: {{ .Name }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

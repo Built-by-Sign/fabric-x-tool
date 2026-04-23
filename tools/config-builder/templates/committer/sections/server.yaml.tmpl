@@ -1,0 +1,30 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/sections/server.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+{{ define "server" -}}
+server:
+  endpoint: 0.0.0.0:{{ .Port }}
+  rate-limit:
+    requests-per-second: 0
+    burst: 0
+  keep-alive:
+    params:
+      time: 300s
+      timeout: 600s
+    enforcement-policy:
+      min-time: 60s
+      permit-without-stream: false
+  max-concurrent-streams: 0
+{{- if .ServerTLS }}
+  tls:
+    key-path: {{ .ServerTLS.KeyPath }}
+    cert-path: {{ .ServerTLS.CertPath }}
+    mode: {{ .ServerTLS.Mode }}
+{{- if .ServerTLS.CACertPaths }}
+    ca-cert-paths:
+{{- range .ServerTLS.CACertPaths }}
+      - {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end -}}

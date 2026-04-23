@@ -1,0 +1,18 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/orderer/templates/config-batcher.yaml.j2 (adapted to Go text/template)
+# Aligned against upstream commit: e4e1ce2
+#
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+{{ template "party-id" . }}
+Batcher:
+    ShardID: {{ .ShardID }}
+    BatchSequenceGap: 10
+    MemPoolMaxSize: 1000000
+    SubmitTimeout: 500ms
+{{ template "general" . }}
+{{ template "filestore" . }}

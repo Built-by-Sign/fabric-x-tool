@@ -1,0 +1,80 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/committer/templates/config-sidecar.yaml.j2 (adapted to Go text/template)
+# Aligned against fabric-x-committer v0.2.0.
+#
+# v0.2.0 schema changes vs v0.1.9:
+#   - orderer.channel-id / organizations / consensus-type removed;
+#     orderer endpoints + TLS material are now discovered from the
+#     config block referenced by orderer.latest-known-config-block-path.
+#   - bootstrap.genesis-block-file-path removed (replaced by the same path).
+#   - orderer.tls.common-ca-cert-paths remains as a temporary CA fallback.
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+{{ template "server" . }}
+orderer:
+  fault-tolerance-level: BFT
+  latest-known-config-block-path: {{ .GenesisBlockPath }}
+  # TODO(upstream): remove this flag + fork dependency once fabric-x-orderer
+  # emits a real MSP-serialized identity from ECDSASigner.Serialize (today
+  # it returns the literal string "creator"; see node/crypto/signer.go TODO).
+  # Tracking PRs:
+  #   - hyperledger/fabric-x-committer#552 (our escape hatch upstream)
+  #   - hyperledger/fabric-x-orderer    (needs Serialize fix; no PR yet)
+  # Without this flag, v0.2.0+ committers reject every non-genesis block with
+  # "implicit policy evaluation failed - 0 sub-policies satisfied". Requires
+  # the Built-by-Sign/fabric-x-committer fork (feat/skip-block-signature-verification)
+  # because upstream does not yet accept this key.
+  skip-block-signature-verification: true
+{{- if .OrdererTLS }}
+  tls:
+{{- if .OrdererTLS.CommonCACertPaths }}
+    common-ca-cert-paths:
+{{- range .OrdererTLS.CommonCACertPaths }}
+      - {{ . }}
+{{- end }}
+{{- end }}
+    key-path: {{ .OrdererTLS.KeyPath }}
+    cert-path: {{ .OrdererTLS.CertPath }}
+    mode: {{ .OrdererTLS.Mode }}
+{{- end }}
+  identity:
+    msp-id: {{ .SidecarIdentityMSPID }}
+    msp-dir: {{ .SidecarIdentityMSPDir }}
+{{- if .SidecarIdentityBCCSP }}
+    bccsp:
+      Default: {{ .SidecarIdentityBCCSP.Default }}
+{{- if .SidecarIdentityBCCSP.PKCS11 }}
+      PKCS11:
+        Library: {{ .SidecarIdentityBCCSP.PKCS11.Library }}
+        Label: "{{ .SidecarIdentityBCCSP.PKCS11.Label }}"
+        Pin: "{{ .SidecarIdentityBCCSP.PKCS11.Pin }}"
+        Hash: {{ .SidecarIdentityBCCSP.PKCS11.Hash }}
+        Security: {{ .SidecarIdentityBCCSP.PKCS11.Security }}
+{{- end }}
+{{- if .SidecarIdentityBCCSP.SW }}
+      SW:
+        Hash: {{ .SidecarIdentityBCCSP.SW.Hash }}
+        Security: {{ .SidecarIdentityBCCSP.SW.Security }}
+{{- end }}
+{{- end }}
+committer:
+  endpoint: {{ .CommitterHost }}:{{ .CommitterPort }}
+{{- if .CommitterTLS }}
+  tls:
+    ca-cert-paths:
+{{- range .CommitterTLS.CACertPaths }}
+      - {{ . }}
+{{- end }}
+    key-path: {{ .CommitterTLS.KeyPath }}
+    cert-path: {{ .CommitterTLS.CertPath }}
+    mode: {{ .CommitterTLS.Mode }}
+{{- end }}
+ledger:
+  path: {{ .ConfigDir }}/ledger
+last-committed-block-set-interval: 5s
+{{ template "monitoring" . }}
+{{ template "logging" . }}
