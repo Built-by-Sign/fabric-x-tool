@@ -2,20 +2,32 @@ package crypto
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"config-builder/internal/config"
 	"config-builder/internal/perms"
+	"config-builder/internal/template"
 	templatefiles "config-builder/templates"
 
 	"golang.org/x/term"
 )
+
+// defaultTLSHostsSANs is the fallback SAN list applied to every node's TLS
+// leaf certificate when no org-level tls_hosts is configured. Kept for
+// dev-mode compatibility (Docker port-forwarding, loopback access); harmless
+// in production where the real FQDN/IP comes from node.Host or org tls_hosts.
+var defaultTLSHostsSANs = []string{"host.docker.internal", "0.0.0.0", "localhost", "127.0.0.1", "::1"}
 
 // FabricCAGenerator handles certificate generation using Fabric CA client with KMS
 type FabricCAGenerator struct {
@@ -33,8 +45,9 @@ type FabricCAGenerator struct {
 
 // NodeInfo contains information about a node for certificate generation
 type NodeInfo struct {
-	Name    string
-	UserPin string // Per-node PIN for KMS access
+	Name     string
+	UserPin  string   // PIN for KMS access during enroll
+	TLSHosts []string // Pre-resolved SAN list for the TLS leaf cert (FQDN + node.Host + defaults + org tls_hosts, deduped)
 }
 
 type fabricCAClientConfigData struct {
@@ -116,7 +129,62 @@ func (g *FabricCAGenerator) Generate() error {
 		}
 	}
 
+	// Write the orderer-org TLS CA bundle to build/fabric-ca-root.pem.
+	// The template engine's copyCommitterTLS step picks this up and drops a
+	// copy into each committer-*/config/tls/. Replaces the cbdc-network
+	// Makefile's fetch-fabric-ca-root target.
+	if err := g.writeOrdererTLSBundleFile(); err != nil {
+		return fmt.Errorf("failed to write orderer TLS bundle: %w", err)
+	}
+
 	g.log("Crypto materials generated successfully using Fabric CA")
+	return nil
+}
+
+// writeOrdererTLSBundleFile concatenates every orderer-org's TLS CA chain
+// and writes the bundle to build/fabric-ca-root.pem. The template engine's
+// copyCommitterTLS step then drops a copy into each committer-*/config/tls/.
+// Committers don't have a single trust anchor — they may talk to orderers
+// across multiple orgs, so the union of all orderer-org TLS CAs is required.
+func (g *FabricCAGenerator) writeOrdererTLSBundleFile() error {
+	if g.config.TLS == nil || !g.config.TLS.Enabled {
+		g.logDetails("TLS disabled; skipping orderer TLS bundle file")
+		return nil
+	}
+
+	absOutputDir, err := filepath.Abs(g.outputDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute output path: %w", err)
+	}
+
+	cryptoDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts", "crypto")
+
+	var bundle bytes.Buffer
+	for _, org := range g.config.OrdererOrgs {
+		tlsCACertPath := filepath.Join(cryptoDir, "ordererOrganizations", org.Domain, "msp", "tlscacerts", fmt.Sprintf("tlsca.%s-cert.pem", org.Domain))
+		data, err := os.ReadFile(tlsCACertPath)
+		if err != nil {
+			return fmt.Errorf("read orderer org %s TLS CA cert: %w", org.Name, err)
+		}
+		bundle.Write(data)
+		if !bytes.HasSuffix(data, []byte("\n")) {
+			bundle.WriteByte('\n')
+		}
+	}
+
+	if bundle.Len() == 0 {
+		g.logDetails("No orderer-org TLS CA chains to bundle")
+		return nil
+	}
+
+	dst := filepath.Join(absOutputDir, "build", template.FabricCARootPEMFilename)
+	if err := os.MkdirAll(filepath.Dir(dst), perms.Dir); err != nil {
+		return fmt.Errorf("create build dir: %w", err)
+	}
+	if err := os.WriteFile(dst, bundle.Bytes(), perms.FileCert); err != nil {
+		return fmt.Errorf("write %s: %w", dst, err)
+	}
+	g.logDetails("Wrote orderer TLS bundle: %s (%d bytes)", dst, bundle.Len())
 	return nil
 }
 
@@ -124,20 +192,25 @@ func (g *FabricCAGenerator) Generate() error {
 func (g *FabricCAGenerator) GenerateOrdererOrgCrypto(org config.OrdererOrg) error {
 	g.log("Generating crypto for orderer org: %s", org.Name)
 
-	orgUserPin, err := org.ResolveKMSUserPin()
+	mspCAURL, err := org.ResolveMSPCAURL(g.config.KMS.CAURL)
+	if err != nil {
+		return err
+	}
+	tlsCAURL, err := org.ResolveTLSCAURL(g.config.KMS.CAURL)
+	if err != nil {
+		return err
+	}
+	setupPin, err := org.ResolveSetupPin()
 	if err != nil {
 		return err
 	}
 
 	nodes := make([]NodeInfo, len(org.Orderers))
 	for i, orderer := range org.Orderers {
-		userPin := orgUserPin
-		if orderer.UserPin != "" {
-			userPin = orderer.UserPin
-		}
 		nodes[i] = NodeInfo{
-			Name:    orderer.Name,
-			UserPin: userPin,
+			Name:     orderer.Name,
+			UserPin:  setupPin,
+			TLSHosts: config.ResolveTLSHosts(defaultTLSHostsSANs, org.TLSHosts, &org.Orderers[i], org.Domain),
 		}
 	}
 
@@ -146,27 +219,32 @@ func (g *FabricCAGenerator) GenerateOrdererOrgCrypto(org config.OrdererOrg) erro
 		return err
 	}
 
-	return g.GenerateOrgCrypto(org.Name, org.Domain, g.config.KMS.CAURL, tokenLabel, nodes, "orderer")
+	return g.GenerateOrgCryptoSplit(org.Name, org.Domain, mspCAURL, tlsCAURL, tokenLabel, nodes, "orderer")
 }
 
 // GeneratePeerOrgCrypto generates crypto materials for a peer organization
 func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 	g.log("Generating crypto for peer org: %s", org.Name)
 
-	orgUserPin, err := org.ResolveKMSUserPin()
+	mspCAURL, err := org.ResolveMSPCAURL(g.config.KMS.CAURL)
+	if err != nil {
+		return err
+	}
+	tlsCAURL, err := org.ResolveTLSCAURL(g.config.KMS.CAURL)
+	if err != nil {
+		return err
+	}
+	setupPin, err := org.ResolveSetupPin()
 	if err != nil {
 		return err
 	}
 
 	nodes := make([]NodeInfo, len(org.Peers))
 	for i, peer := range org.Peers {
-		userPin := orgUserPin
-		if peer.UserPin != "" {
-			userPin = peer.UserPin
-		}
 		nodes[i] = NodeInfo{
-			Name:    peer.Name,
-			UserPin: userPin,
+			Name:     peer.Name,
+			UserPin:  setupPin,
+			TLSHosts: config.ResolveTLSHosts(defaultTLSHostsSANs, org.TLSHosts, &org.Peers[i], org.Domain),
 		}
 	}
 	seenPeers := make(map[string]struct{}, len(nodes))
@@ -177,9 +255,11 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 		if _, exists := seenPeers[committerName]; exists {
 			continue
 		}
+		committerNode := config.Node{Name: committerName}
 		nodes = append(nodes, NodeInfo{
-			Name:    committerName,
-			UserPin: orgUserPin,
+			Name:     committerName,
+			UserPin:  setupPin,
+			TLSHosts: config.ResolveTLSHosts(defaultTLSHostsSANs, org.TLSHosts, &committerNode, org.Domain),
 		})
 	}
 
@@ -188,7 +268,7 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 		return err
 	}
 
-	if err := g.GenerateOrgCrypto(org.Name, org.Domain, g.config.KMS.CAURL, tokenLabel, nodes, "peer"); err != nil {
+	if err := g.GenerateOrgCryptoSplit(org.Name, org.Domain, mspCAURL, tlsCAURL, tokenLabel, nodes, "peer"); err != nil {
 		return err
 	}
 
@@ -205,18 +285,14 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 
 		cryptoDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts", "crypto")
 
-		// Users inherit the org-level PIN (the same token holds both node and
-		// user keys). Per-user PIN overrides are not currently supported.
-		defaultUserPin := orgUserPin
-
 		orgMSPDir := filepath.Join(cryptoDir, "peerOrganizations", org.Domain, "msp")
 		caCertData, tlsCACertData, err := g.readOrgCACerts(orgMSPDir)
 		if err != nil {
 			g.logDetails("Warning: Could not pre-read CA certificates: %v (will read per-user)", err)
 		}
 
-		if err := g.generateUsersParallel(org.Domain, g.config.KMS.CAURL, tokenLabel,
-			defaultUserPin, users, cryptoDir, caCertData, tlsCACertData); err != nil {
+		if err := g.generateUsersParallel(org.Domain, mspCAURL, tokenLabel,
+			setupPin, users, cryptoDir, caCertData, tlsCACertData); err != nil {
 			return err
 		}
 	}
@@ -250,10 +326,10 @@ func (g *FabricCAGenerator) committerPeerNamesForOrg(org *config.PeerOrg) []stri
 	return byOrg[org.Name]
 }
 
-// GenerateOrgCrypto generates crypto materials for an organization using fabric-ca-client
-// This method uses docker run to execute fabric-x-tool image with fabric-ca-client
-// orgType should be "orderer" or "peer"
-func (g *FabricCAGenerator) GenerateOrgCrypto(orgName, domain, caURL, tokenLabel string, nodes []NodeInfo, orgType string) error {
+// GenerateOrgCryptoSplit generates crypto materials for an organization, routing
+// MSP enroll and TLS leaf enroll to potentially different fabric-ca-servers.
+// orgType should be "orderer" or "peer".
+func (g *FabricCAGenerator) GenerateOrgCryptoSplit(orgName, domain, mspCAURL, tlsCAURL, tokenLabel string, nodes []NodeInfo, orgType string) error {
 	if len(nodes) == 0 {
 		return fmt.Errorf("%s org %s.%s requires at least one node identity", orgType, orgName, domain)
 	}
@@ -263,12 +339,8 @@ func (g *FabricCAGenerator) GenerateOrgCrypto(orgName, domain, caURL, tokenLabel
 		return fmt.Errorf("failed to get absolute output path: %w", err)
 	}
 
-	// Create output directory structure matching cryptogen layout
-	// For orderer orgs: ordererOrganizations/<domain>/orderers/<node>.<domain>/msp
-	// For peer orgs: peerOrganizations/<domain>/peers/<node>.<domain>/msp
 	cryptoDir := filepath.Join(absOutputDir, "build", "config", "cryptogen-artifacts", "crypto")
 
-	// Determine organization directory based on type
 	var orgDirType string
 	if orgType == "peer" {
 		orgDirType = "peerOrganizations"
@@ -281,23 +353,22 @@ func (g *FabricCAGenerator) GenerateOrgCrypto(orgName, domain, caURL, tokenLabel
 		return fmt.Errorf("failed to create org directory: %w", err)
 	}
 
-	// Generate certificates for each node (in parallel for better performance)
-	if err := g.generateNodesParallel(orgName, domain, caURL, tokenLabel, nodes, cryptoDir, orgType); err != nil {
+	// Node identity (MSP) + TLS leaf enrolls run in parallel; MSP goes through
+	// mspCAURL, TLS goes through tlsCAURL. The two URLs may resolve to the
+	// same fabric-ca-server (fallback mode) or to two independent ones.
+	if err := g.generateNodesParallel(orgName, domain, mspCAURL, tlsCAURL, tokenLabel, nodes, cryptoDir, orgType); err != nil {
 		return err
 	}
 
-	// 3. Generate Admin user (using KMS)
 	adminNode := NodeInfo{
 		Name:    "Admin",
-		UserPin: nodes[0].UserPin, // Use first node's PIN for admin
+		UserPin: nodes[0].UserPin,
 	}
-	if err := g.GenerateAdminUser(domain, caURL, tokenLabel, adminNode, cryptoDir, orgType); err != nil {
+	if err := g.GenerateAdminUser(domain, mspCAURL, tokenLabel, adminNode, cryptoDir, orgType); err != nil {
 		return fmt.Errorf("failed to generate admin user: %w", err)
 	}
 
-	// 4. Create organization-level MSP directory structure
-	// This is required by armageddon tool to find CA certificates
-	if err := g.createOrgMSP(domain, cryptoDir, orgType); err != nil {
+	if err := g.createOrgMSP(domain, mspCAURL, tlsCAURL, cryptoDir, orgType); err != nil {
 		return fmt.Errorf("failed to create org MSP structure: %w", err)
 	}
 
@@ -387,8 +458,9 @@ func (g *FabricCAGenerator) generateNodeCrypto(orgName, domain, caURL, tokenLabe
 }
 
 // GenerateNodeTLS generates TLS certificates for a node using fabric-ca-client
-// This uses software mode (no KMS) with --enrollment.profile tls
-// Command: fabric-ca-client enroll -u "URL" -m "node.domain" --enrollment.profile tls -M "dir/node"
+// This uses software mode (no KMS) with --enrollment.profile tls.
+// The TLS cert subject gets OU=<node-name>-tls (cosmetic / audit aid; not
+// enforced by Fabric-X) and SAN comes from the pre-resolved node.TLSHosts.
 func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo, cryptoDir string, orgType string) error {
 	g.logDetails("  Generating TLS certificate for node: %s.%s", node.Name, domain)
 
@@ -409,20 +481,20 @@ func (g *FabricCAGenerator) GenerateNodeTLS(domain, caURL string, node NodeInfo,
 		return fmt.Errorf("failed to create keys directory: %w", err)
 	}
 
-	// Build docker run command to execute fabric-ca-client enroll with TLS profile
-	// Note: No KMS configuration (-c parameter) is used for TLS certificates
-	// Mount the keys directory and use -M parameter with absolute path in container
-	// Set working directory to /app to ensure fabric-ca-client uses mounted directory
 	nodeFQDN := fmt.Sprintf("%s.%s", node.Name, domain)
 
-	// Build CSR hosts list to include both FQDN and host.docker.internal
-	// This fixes TLS certificate validation when connecting via host.docker.internal
-	csrHosts := fmt.Sprintf("%s,host.docker.internal,localhost,0.0.0.0,127.0.0.1,::1", nodeFQDN)
+	csrHostsList := node.TLSHosts
+	if len(csrHostsList) == 0 {
+		// Defensive fallback: caller should have populated TLSHosts already.
+		csrHostsList = []string{nodeFQDN}
+	}
+	csrHosts := strings.Join(csrHostsList, ",")
+	csrNames := fmt.Sprintf("OU=%s-tls", node.Name)
 
 	// Run fabric-ca-client TLS enroll (Docker or local)
 	// The enrollment creates: keys/node/{keystore,signcerts,cacerts}
 	tlsTempDir := filepath.Join(keysDir, "node")
-	if err := g.runFabricCAClientEnrollTLS(tlsTempDir, caURL, nodeFQDN, csrHosts); err != nil {
+	if err := g.runFabricCAClientEnrollTLS(tlsTempDir, caURL, nodeFQDN, csrHosts, csrNames); err != nil {
 		return fmt.Errorf("fabric-ca-client TLS enroll failed for node %s: %w", node.Name, err)
 	}
 
@@ -634,29 +706,24 @@ func (g *FabricCAGenerator) normalizeEnrolledMSP(mspDir, domain, certBaseName st
 	return fmt.Errorf("no CA certificate PEM found in %s", cacertsDir)
 }
 
-// createOrgMSP creates organization-level MSP directory structure
-// This copies the CA certificate from the first node to the org-level MSP
-// Required by armageddon tool: ordererOrganizations/{domain}/msp/cacerts/ca.{domain}-cert.pem
-// Also creates tlscacerts directory and config.yaml
-func (g *FabricCAGenerator) createOrgMSP(domain, cryptoDir string, orgType string) error {
+// createOrgMSP creates organization-level MSP directory structure by fetching
+// the MSP CA chain from mspCAURL/cainfo and the TLS CA chain from tlsCAURL/cainfo.
+// Replaces the previous behavior of copying the first node's per-enroll cacert,
+// which conflated MSP and TLS trust roots when the two CAs differ.
+func (g *FabricCAGenerator) createOrgMSP(domain, mspCAURL, tlsCAURL, cryptoDir string, orgType string) error {
 	g.logDetails("Creating organization-level MSP for domain: %s", domain)
 
-	// Determine organization and node directory based on type
-	var orgDirType, nodeType string
+	var orgDirType string
 	if orgType == "peer" {
 		orgDirType = "peerOrganizations"
-		nodeType = "peers"
 	} else {
 		orgDirType = "ordererOrganizations"
-		nodeType = "orderers"
 	}
 
-	// Define paths
 	orgMSPDir := filepath.Join(cryptoDir, orgDirType, domain, "msp")
 	orgCACertsDir := filepath.Join(orgMSPDir, "cacerts")
 	orgTLSCACertsDir := filepath.Join(orgMSPDir, "tlscacerts")
 
-	// Create org MSP directories
 	if err := os.MkdirAll(orgCACertsDir, perms.Dir); err != nil {
 		return fmt.Errorf("failed to create org cacerts directory: %w", err)
 	}
@@ -664,54 +731,26 @@ func (g *FabricCAGenerator) createOrgMSP(domain, cryptoDir string, orgType strin
 		return fmt.Errorf("failed to create org tlscacerts directory: %w", err)
 	}
 
-	// Find the first node's CA certificate to copy
-	nodesDir := filepath.Join(cryptoDir, orgDirType, domain, nodeType)
-	entries, err := os.ReadDir(nodesDir)
+	mspChain, err := fetchFabricCAChain(mspCAURL)
 	if err != nil {
-		return fmt.Errorf("failed to read %s directory: %w", nodeType, err)
+		return fmt.Errorf("failed to fetch MSP CA chain from %s: %w", redactURL(mspCAURL), err)
 	}
-
-	if len(entries) == 0 {
-		return fmt.Errorf("no %s nodes found in %s", nodeType, nodesDir)
-	}
-
-	// Use the first node's CA certificate for identity
-	firstNodeDir := filepath.Join(nodesDir, entries[0].Name(), "msp", "cacerts")
-	caCertFiles, err := os.ReadDir(firstNodeDir)
-	if err != nil {
-		return fmt.Errorf("failed to read node cacerts directory: %w", err)
-	}
-
-	if len(caCertFiles) == 0 {
-		return fmt.Errorf("no CA certificate found in %s", firstNodeDir)
-	}
-
-	// Copy the CA certificate to org-level MSP with standard naming
-	srcCACert := filepath.Join(firstNodeDir, caCertFiles[0].Name())
 	dstCACert := filepath.Join(orgCACertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
-
-	if err := g.copyFile(srcCACert, dstCACert); err != nil {
-		return fmt.Errorf("failed to copy CA certificate: %w", err)
+	if err := os.WriteFile(dstCACert, mspChain, perms.FileCert); err != nil {
+		return fmt.Errorf("failed to write MSP CA cert: %w", err)
 	}
+	g.logDetails("  Wrote MSP CA chain: %s", dstCACert)
 
-	g.logDetails("  Copied CA cert: %s", dstCACert)
-
-	// Copy TLS CA certificate from first node's TLS directory
-	firstNodeTLSDir := filepath.Join(nodesDir, entries[0].Name(), "tls")
-	tlsCACertSrc := filepath.Join(firstNodeTLSDir, "ca.crt")
-
-	// Check if TLS CA cert exists
-	if _, err := os.Stat(tlsCACertSrc); err == nil {
-		tlsCACertDst := filepath.Join(orgTLSCACertsDir, fmt.Sprintf("tlsca.%s-cert.pem", domain))
-		if err := g.copyFile(tlsCACertSrc, tlsCACertDst); err != nil {
-			return fmt.Errorf("failed to copy TLS CA certificate: %w", err)
-		}
-		g.logDetails("  Copied TLS CA cert: %s", tlsCACertDst)
-	} else {
-		g.logDetails("  Warning: TLS CA certificate not found at %s", tlsCACertSrc)
+	tlsChain, err := fetchFabricCAChain(tlsCAURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch TLS CA chain from %s: %w", redactURL(tlsCAURL), err)
 	}
+	dstTLSCACert := filepath.Join(orgTLSCACertsDir, fmt.Sprintf("tlsca.%s-cert.pem", domain))
+	if err := os.WriteFile(dstTLSCACert, tlsChain, perms.FileCert); err != nil {
+		return fmt.Errorf("failed to write TLS CA cert: %w", err)
+	}
+	g.logDetails("  Wrote TLS CA chain: %s", dstTLSCACert)
 
-	// Generate config.yaml for the organization MSP
 	if err := g.generateMSPConfig(orgMSPDir, domain); err != nil {
 		return fmt.Errorf("failed to generate MSP config: %w", err)
 	}
@@ -720,6 +759,101 @@ func (g *FabricCAGenerator) createOrgMSP(domain, cryptoDir string, orgType strin
 	g.logProgress("Created organization MSP for %s", domain)
 
 	return nil
+}
+
+// fetchFabricCAChain hits a fabric-ca-server's /cainfo endpoint and returns
+// the CAChain PEM (the server's TLS-signing CA root + intermediates).
+// The caURL may include userinfo (admin:adminpw@...) — only the scheme/host
+// portion is used for the HTTP request; userinfo is dropped from the request.
+func fetchFabricCAChain(caURL string) ([]byte, error) {
+	endpoint, err := buildCAInfoEndpoint(caURL)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: status %d", endpoint, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read cainfo body: %w", err)
+	}
+
+	var payload struct {
+		Result struct {
+			CAChain string `json:"CAChain"`
+		} `json:"result"`
+		Errors []struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("parse cainfo JSON: %w (body=%q)", err, truncate(string(body), 200))
+	}
+	if len(payload.Errors) > 0 {
+		return nil, fmt.Errorf("cainfo returned errors: %+v", payload.Errors)
+	}
+	if payload.Result.CAChain == "" {
+		return nil, fmt.Errorf("cainfo missing CAChain field (body=%q)", truncate(string(body), 200))
+	}
+
+	chain, err := base64.StdEncoding.DecodeString(payload.Result.CAChain)
+	if err != nil {
+		return nil, fmt.Errorf("decode CAChain base64: %w", err)
+	}
+	if len(chain) == 0 {
+		return nil, fmt.Errorf("decoded CAChain is empty")
+	}
+	// fabric-ca returns concatenated PEMs; ensure trailing newline for downstream consumers.
+	if !bytes.HasSuffix(chain, []byte("\n")) {
+		chain = append(chain, '\n')
+	}
+	return chain, nil
+}
+
+// buildCAInfoEndpoint normalizes a fabric-ca URL (possibly with userinfo)
+// into a clean http(s)://host:port/cainfo URL.
+func buildCAInfoEndpoint(caURL string) (string, error) {
+	u, err := url.Parse(caURL)
+	if err != nil {
+		return "", fmt.Errorf("parse CA URL %q: %w", caURL, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("CA URL %q missing scheme or host", caURL)
+	}
+	clean := &url.URL{
+		Scheme: u.Scheme,
+		Host:   u.Host,
+		Path:   "/cainfo",
+	}
+	return clean.String(), nil
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if u.User != nil {
+		u.User = url.User("***")
+	}
+	return u.String()
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // copyFile copies a file from src to dst
@@ -1126,8 +1260,10 @@ func (g *FabricCAGenerator) logProgressSafe(format string, args ...interface{}) 
 	}
 }
 
-// generateNodesParallel generates node certificates (identity + TLS) in parallel
-func (g *FabricCAGenerator) generateNodesParallel(orgName, domain, caURL, tokenLabel string,
+// generateNodesParallel generates node certificates (identity + TLS) in parallel.
+// MSP enroll uses mspCAURL with the KMS-backed PIN; TLS leaf enroll uses
+// tlsCAURL with a software-generated keypair (no KMS).
+func (g *FabricCAGenerator) generateNodesParallel(orgName, domain, mspCAURL, tlsCAURL, tokenLabel string,
 	nodes []NodeInfo, cryptoDir string, orgType string) error {
 
 	// Create semaphore for controlling concurrency
@@ -1149,14 +1285,14 @@ func (g *FabricCAGenerator) generateNodesParallel(orgName, domain, caURL, tokenL
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release semaphore
 
-			// 1. Generate node identity certificate (using KMS)
-			if err := g.generateNodeCrypto(orgName, domain, caURL, tokenLabel, n, cryptoDir, orgType); err != nil {
+			// 1. Generate node identity certificate (using KMS via MSP CA)
+			if err := g.generateNodeCrypto(orgName, domain, mspCAURL, tokenLabel, n, cryptoDir, orgType); err != nil {
 				errChan <- fmt.Errorf("failed to generate crypto for node %s: %w", n.Name, err)
 				return
 			}
 
-			// 2. Generate node TLS certificate (software mode, no KMS)
-			if err := g.GenerateNodeTLS(domain, caURL, n, cryptoDir, orgType); err != nil {
+			// 2. Generate node TLS certificate (software mode, via TLS CA)
+			if err := g.GenerateNodeTLS(domain, tlsCAURL, n, cryptoDir, orgType); err != nil {
 				errChan <- fmt.Errorf("failed to generate TLS for node %s: %w", n.Name, err)
 				return
 			}
@@ -1341,15 +1477,15 @@ func (g *FabricCAGenerator) fabricCAPKCS11Library() string {
 }
 
 // runFabricCAClientEnrollTLS runs fabric-ca-client enroll for TLS (Docker or local)
-func (g *FabricCAGenerator) runFabricCAClientEnrollTLS(outputDir, caURL, nodeFQDN, csrHosts string) error {
+func (g *FabricCAGenerator) runFabricCAClientEnrollTLS(outputDir, caURL, nodeFQDN, csrHosts, csrNames string) error {
 	if g.config.Docker.UseLocalTools {
-		return g.runFabricCAClientEnrollTLSLocal(outputDir, caURL, nodeFQDN, csrHosts)
+		return g.runFabricCAClientEnrollTLSLocal(outputDir, caURL, nodeFQDN, csrHosts, csrNames)
 	}
-	return g.runFabricCAClientEnrollTLSDocker(outputDir, caURL, nodeFQDN, csrHosts)
+	return g.runFabricCAClientEnrollTLSDocker(outputDir, caURL, nodeFQDN, csrHosts, csrNames)
 }
 
 // runFabricCAClientEnrollTLSLocal runs fabric-ca-client enroll for TLS using local binary
-func (g *FabricCAGenerator) runFabricCAClientEnrollTLSLocal(outputDir, caURL, nodeFQDN, csrHosts string) error {
+func (g *FabricCAGenerator) runFabricCAClientEnrollTLSLocal(outputDir, caURL, nodeFQDN, csrHosts, csrNames string) error {
 	// Check if fabric-ca-client is available
 	if _, err := exec.LookPath("fabric-ca-client"); err != nil {
 		return fmt.Errorf("fabric-ca-client not found in PATH. Please install it or use Docker mode (set use_local_tools: false)")
@@ -1361,6 +1497,7 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollTLSLocal(outputDir, caURL, no
 		"-m", nodeFQDN,
 		"--enrollment.profile", "tls",
 		"--csr.hosts", csrHosts,
+		"--csr.names", csrNames,
 		"-M", outputDir,
 	)
 
@@ -1380,7 +1517,7 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollTLSLocal(outputDir, caURL, no
 }
 
 // runFabricCAClientEnrollTLSDocker runs fabric-ca-client enroll for TLS using Docker
-func (g *FabricCAGenerator) runFabricCAClientEnrollTLSDocker(outputDir, caURL, nodeFQDN, csrHosts string) error {
+func (g *FabricCAGenerator) runFabricCAClientEnrollTLSDocker(outputDir, caURL, nodeFQDN, csrHosts, csrNames string) error {
 	args := []string{
 		"run",
 		"--rm",
@@ -1392,7 +1529,8 @@ func (g *FabricCAGenerator) runFabricCAClientEnrollTLSDocker(outputDir, caURL, n
 -m "%s" \
 --enrollment.profile tls \
 --csr.hosts "%s" \
--M "./tls"`, caURL, nodeFQDN, csrHosts),
+--csr.names "%s" \
+-M "./tls"`, caURL, nodeFQDN, csrHosts, csrNames),
 	}
 
 	g.logDetails("Running: docker %v", args)

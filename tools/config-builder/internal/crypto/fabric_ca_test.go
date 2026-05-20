@@ -1,6 +1,10 @@
 package crypto
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +45,9 @@ func TestFabricCANormalizeEnrolledMSPMatchesCryptogenLayout(t *testing.T) {
 
 func TestFabricCAGenerateOrgCryptoRejectsEmptyNodeSet(t *testing.T) {
 	g := NewFabricCAGenerator(&config.NetworkConfig{}, t.TempDir(), "quiet", false)
-	if err := g.GenerateOrgCrypto("Org1", "org1.example.com", "http://ca.example.com:7054", "token", nil, "peer"); err == nil {
+	if err := g.GenerateOrgCryptoSplit("Org1", "org1.example.com",
+		"http://ca.example.com:7054", "http://tls-ca.example.com:7054",
+		"token", nil, "peer"); err == nil {
 		t.Fatal("expected empty node set to fail")
 	}
 }
@@ -111,6 +117,78 @@ func TestWriteFabricCAClientConfigUsesVendoredTemplate(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered config missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestBuildCAInfoEndpointStripsUserinfo(t *testing.T) {
+	got, err := buildCAInfoEndpoint("http://admin:adminpw@ca.example.com:7054")
+	if err != nil {
+		t.Fatalf("buildCAInfoEndpoint: %v", err)
+	}
+	if got != "http://ca.example.com:7054/cainfo" {
+		t.Fatalf("want stripped url, got %q", got)
+	}
+}
+
+func TestBuildCAInfoEndpointRejectsBadURL(t *testing.T) {
+	if _, err := buildCAInfoEndpoint("not-a-url"); err == nil {
+		t.Fatal("expected error for URL missing scheme/host")
+	}
+}
+
+func TestRedactURLMasksCredentials(t *testing.T) {
+	got := redactURL("http://admin:adminpw@ca.example.com:7054")
+	if strings.Contains(got, "adminpw") || strings.Contains(got, "admin:") {
+		t.Fatalf("expected credentials stripped, got %q", got)
+	}
+	if !strings.Contains(got, "ca.example.com:7054") {
+		t.Fatalf("expected host preserved, got %q", got)
+	}
+}
+
+func TestFetchFabricCAChainParsesCAChain(t *testing.T) {
+	pem := "-----BEGIN CERTIFICATE-----\nMIIBASE64DATA\n-----END CERTIFICATE-----\n"
+	encoded := base64.StdEncoding.EncodeToString([]byte(pem))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cainfo" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		payload := map[string]any{
+			"result": map[string]any{"CAChain": encoded, "CAName": "ca", "Version": "1.5"},
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer srv.Close()
+
+	got, err := fetchFabricCAChain(srv.URL)
+	if err != nil {
+		t.Fatalf("fetchFabricCAChain: %v", err)
+	}
+	if string(got) != pem {
+		t.Fatalf("got %q, want %q", string(got), pem)
+	}
+}
+
+func TestFetchFabricCAChainErrorsOnNon200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	if _, err := fetchFabricCAChain(srv.URL); err == nil {
+		t.Fatal("expected non-200 to error")
+	}
+}
+
+func TestFetchFabricCAChainErrorsOnMissingCAChain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{}}`))
+	}))
+	defer srv.Close()
+
+	if _, err := fetchFabricCAChain(srv.URL); err == nil {
+		t.Fatal("expected missing CAChain to error")
 	}
 }
 
