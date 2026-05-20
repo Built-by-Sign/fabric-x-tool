@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"config-builder/internal/config"
 	"config-builder/internal/perms"
@@ -53,17 +54,35 @@ func Generate(cfg *config.NetworkConfig, outputDir string) error {
 		// client identity — same tlsCA is trusted by every orderer + committer
 		// endpoint. channel_admin has only MSP (signing) material, not TLS.
 		tlsDir := filepath.Join(cryptoBase, "peers", "committer-sidecar."+domain, "tls")
-		tlsRootCA := filepath.Join(mspDir, "tlscacerts", "tlsca."+domain+"-cert.pem")
+
+		// rootCerts: list every PEM under tlscacerts/ + tlsintermediatecerts/.
+		// fxconfig's RootCertPaths is []string and the underlying trust pool
+		// AppendCertsFromPEM accepts each independently, so multi-tier CAs
+		// can hand over root + intermediate(s) without a bundle file. A
+		// one-tier CA simply lists one entry, matching the previous layout.
+		rootCertPaths := collectTLSCertPaths(mspDir)
+		if len(rootCertPaths) == 0 {
+			// Fall back to the legacy single-file path so a crypto tree from
+			// an older config-builder still works.
+			rootCertPaths = []string{filepath.Join(mspDir, "tlscacerts", "tlsca."+domain+"-cert.pem")}
+		}
+
+		var rootCertsYAML strings.Builder
+		for _, p := range rootCertPaths {
+			rootCertsYAML.WriteString("    - ")
+			rootCertsYAML.WriteString(p)
+			rootCertsYAML.WriteByte('\n')
+		}
+
 		tlsSection = fmt.Sprintf(`tls:
   enabled: true
   clientKey: %s
   clientCert: %s
   rootCerts:
-    - %s
-`,
+%s`,
 			filepath.Join(tlsDir, "server.key"),
 			filepath.Join(tlsDir, "server.crt"),
-			tlsRootCA,
+			rootCertsYAML.String(),
 		)
 	}
 
@@ -107,4 +126,25 @@ notifications:
 		return fmt.Errorf("fxconfig: write %s: %w", dst, err)
 	}
 	return nil
+}
+
+// collectTLSCertPaths returns every *.pem path under mspDir/tlscacerts and
+// mspDir/tlsintermediatecerts. Missing dirs are skipped silently so one-tier
+// CAs degrade to a single-element slice.
+func collectTLSCertPaths(mspDir string) []string {
+	var paths []string
+	for _, sub := range []string{"tlscacerts", "tlsintermediatecerts"} {
+		dir := filepath.Join(mspDir, sub)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".pem" {
+				continue
+			}
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		}
+	}
+	return paths
 }

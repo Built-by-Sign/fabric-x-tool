@@ -20,6 +20,28 @@ func getDefaultHost() string {
 	return "localhost"
 }
 
+// collectPEMPaths returns every *.pem file path under each directory, in
+// directory-and-filename order. Missing dirs are skipped silently so
+// one-tier CAs (no intermediate dirs) degrade to a single-path slice
+// identical to the previous behaviour.
+func collectPEMPaths(dirs ...string) []string {
+	var paths []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".pem" {
+				continue
+			}
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		}
+	}
+	return paths
+}
+
+
 // TemplateData holds data for shared_config.yaml template
 type TemplateData struct {
 	Parties []PartyData
@@ -81,16 +103,29 @@ func (g *Generator) buildTemplateData() *TemplateData {
 	for partyID, org := range g.config.OrdererOrgs {
 		partyID := partyID + 1 // PartyID starts from 1
 
-		// Build CA cert paths for this organization only
-		caCertPath := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "msp", "cacerts", fmt.Sprintf("ca.%s-cert.pem", org.Domain))
-		if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
-			caCertPath = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "msp", "cacerts", fmt.Sprintf("ca.%s-cert.pem", org.Domain))
+		// Build CA + TLS CA path lists from the org's MSP layout. Fabric MSP
+		// keeps roots and intermediates in separate dirs:
+		//   cacerts/             — self-signed roots
+		//   intermediatecerts/   — intermediates (only present for multi-tier CAs)
+		//   tlscacerts/          — TLS roots
+		//   tlsintermediatecerts/ — TLS intermediates
+		// armageddon's loadCACerts reads each path with os.ReadFile and the
+		// fabric-x-orderer trust pool accepts the resulting [][]byte, so we
+		// can hand it every PEM in the chain directly without an extra
+		// bundle file. A one-tier CA produces a one-element slice exactly
+		// like the previous behaviour.
+		orgMSPDir := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "msp")
+		if _, err := os.Stat(orgMSPDir); os.IsNotExist(err) {
+			orgMSPDir = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "msp")
 		}
-
-		tlsCACertPath := filepath.Join(cryptoArtifactsDir, "crypto", "ordererOrganizations", org.Domain, "msp", "tlscacerts", fmt.Sprintf("tlsca.%s-cert.pem", org.Domain))
-		if _, err := os.Stat(tlsCACertPath); os.IsNotExist(err) {
-			tlsCACertPath = filepath.Join(cryptoArtifactsDir, "ordererOrganizations", org.Domain, "msp", "tlscacerts", fmt.Sprintf("tlsca.%s-cert.pem", org.Domain))
-		}
+		caCertPaths := collectPEMPaths(
+			filepath.Join(orgMSPDir, "cacerts"),
+			filepath.Join(orgMSPDir, "intermediatecerts"),
+		)
+		tlsCACertPaths := collectPEMPaths(
+			filepath.Join(orgMSPDir, "tlscacerts"),
+			filepath.Join(orgMSPDir, "tlsintermediatecerts"),
+		)
 
 		// Find nodes for this organization
 		var routerNode *config.Node
@@ -115,8 +150,8 @@ func (g *Generator) buildTemplateData() *TemplateData {
 		// Build party data
 		party := PartyData{
 			PartyID:    partyID,
-			CACerts:    []string{caCertPath},
-			TLSCACerts: []string{tlsCACertPath},
+			CACerts:    caCertPaths,
+			TLSCACerts: tlsCACertPaths,
 		}
 
 		// Router config

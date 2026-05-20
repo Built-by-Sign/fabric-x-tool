@@ -161,10 +161,20 @@ func (g *FabricCAGenerator) writeOrdererTLSBundleFile() error {
 
 	var bundle bytes.Buffer
 	for _, org := range g.config.OrdererOrgs {
-		tlsCACertPath := filepath.Join(cryptoDir, "ordererOrganizations", org.Domain, "msp", "tlscacerts", fmt.Sprintf("tlsca.%s-cert.pem", org.Domain))
-		data, err := os.ReadFile(tlsCACertPath)
+		// Bundle root + any intermediate TLS CAs for this org. Multi-tier CAs
+		// leave the intermediate in tlsintermediatecerts/; one-tier CAs only
+		// have tlscacerts/ and readPEMBundle silently skips the missing
+		// intermediate dir.
+		orgMSPDir := filepath.Join(cryptoDir, "ordererOrganizations", org.Domain, "msp")
+		data, err := readPEMBundle(
+			filepath.Join(orgMSPDir, "tlscacerts"),
+			filepath.Join(orgMSPDir, "tlsintermediatecerts"),
+		)
 		if err != nil {
-			return fmt.Errorf("read orderer org %s TLS CA cert: %w", org.Name, err)
+			return fmt.Errorf("read orderer org %s TLS CA chain: %w", org.Name, err)
+		}
+		if len(data) == 0 {
+			return fmt.Errorf("orderer org %s: no TLS CA PEM under %s", org.Name, orgMSPDir)
 		}
 		bundle.Write(data)
 		if !bytes.HasSuffix(data, []byte("\n")) {
@@ -708,8 +718,21 @@ func (g *FabricCAGenerator) normalizeEnrolledMSP(mspDir, domain, certBaseName st
 
 // createOrgMSP creates organization-level MSP directory structure by fetching
 // the MSP CA chain from mspCAURL/cainfo and the TLS CA chain from tlsCAURL/cainfo.
-// Replaces the previous behavior of copying the first node's per-enroll cacert,
-// which conflated MSP and TLS trust roots when the two CAs differ.
+//
+// The returned chain may contain multiple certificates (root + intermediates)
+// when the fabric-ca-server is itself an intermediate. We split self-signed
+// roots into cacerts/ / tlscacerts/ and intermediates into intermediatecerts/
+// / tlsintermediatecerts/ so that configtxgen / Fabric MSP loader / armageddon
+// see a well-formed Fabric MSP layout and validate chains correctly.
+//
+// One-tier CAs (chain length 1, self-signed) produce no intermediate dirs,
+// keeping the layout byte-identical to the previous single-file behaviour.
+//
+// After laying down the org-level MSP, the per-node and admin MSP directories
+// produced by earlier enroll calls are synced from this single source of
+// truth — fabric-ca-client only writes its direct issuer into those nodes'
+// cacerts/, so any upstream root / intermediate would be missing without
+// this sync.
 func (g *FabricCAGenerator) createOrgMSP(domain, mspCAURL, tlsCAURL, cryptoDir string, orgType string) error {
 	g.logDetails("Creating organization-level MSP for domain: %s", domain)
 
@@ -722,43 +745,163 @@ func (g *FabricCAGenerator) createOrgMSP(domain, mspCAURL, tlsCAURL, cryptoDir s
 
 	orgMSPDir := filepath.Join(cryptoDir, orgDirType, domain, "msp")
 	orgCACertsDir := filepath.Join(orgMSPDir, "cacerts")
+	orgIntermediateCertsDir := filepath.Join(orgMSPDir, "intermediatecerts")
 	orgTLSCACertsDir := filepath.Join(orgMSPDir, "tlscacerts")
-
-	if err := os.MkdirAll(orgCACertsDir, perms.Dir); err != nil {
-		return fmt.Errorf("failed to create org cacerts directory: %w", err)
-	}
-	if err := os.MkdirAll(orgTLSCACertsDir, perms.Dir); err != nil {
-		return fmt.Errorf("failed to create org tlscacerts directory: %w", err)
-	}
+	orgTLSIntermediateCertsDir := filepath.Join(orgMSPDir, "tlsintermediatecerts")
 
 	mspChain, err := fetchFabricCAChain(mspCAURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch MSP CA chain from %s: %w", redactURL(mspCAURL), err)
 	}
-	dstCACert := filepath.Join(orgCACertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
-	if err := os.WriteFile(dstCACert, mspChain, perms.FileCert); err != nil {
-		return fmt.Errorf("failed to write MSP CA cert: %w", err)
+	if err := writeChainToMSPDirs(mspChain, orgCACertsDir, orgIntermediateCertsDir, fmt.Sprintf("ca.%s", domain)); err != nil {
+		return fmt.Errorf("failed to write MSP CA chain: %w", err)
 	}
-	g.logDetails("  Wrote MSP CA chain: %s", dstCACert)
+	g.logDetails("  Wrote MSP CA chain into: %s (+ intermediatecerts if multi-tier)", orgCACertsDir)
 
 	tlsChain, err := fetchFabricCAChain(tlsCAURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch TLS CA chain from %s: %w", redactURL(tlsCAURL), err)
 	}
-	dstTLSCACert := filepath.Join(orgTLSCACertsDir, fmt.Sprintf("tlsca.%s-cert.pem", domain))
-	if err := os.WriteFile(dstTLSCACert, tlsChain, perms.FileCert); err != nil {
-		return fmt.Errorf("failed to write TLS CA cert: %w", err)
+	if err := writeChainToMSPDirs(tlsChain, orgTLSCACertsDir, orgTLSIntermediateCertsDir, fmt.Sprintf("tlsca.%s", domain)); err != nil {
+		return fmt.Errorf("failed to write TLS CA chain: %w", err)
 	}
-	g.logDetails("  Wrote TLS CA chain: %s", dstTLSCACert)
+	g.logDetails("  Wrote TLS CA chain into: %s (+ tlsintermediatecerts if multi-tier)", orgTLSCACertsDir)
 
 	if err := g.generateMSPConfig(orgMSPDir, domain); err != nil {
 		return fmt.Errorf("failed to generate MSP config: %w", err)
+	}
+
+	if err := g.syncNodeMSPsFromOrg(orgMSPDir, cryptoDir, domain, orgType); err != nil {
+		return fmt.Errorf("failed to sync node MSPs from org-level: %w", err)
 	}
 
 	g.logDetails("  Created org MSP: %s", orgMSPDir)
 	g.logProgress("Created organization MSP for %s", domain)
 
 	return nil
+}
+
+// syncNodeMSPsFromOrg propagates the org-level CA trust material (cacerts /
+// intermediatecerts / tlscacerts / tlsintermediatecerts) to every per-node
+// and per-admin MSP under the same org, and refreshes each node's
+// tls/ca.crt with the full TLS chain bundle.
+//
+// fabric-ca-client enroll only writes its direct issuer into a per-enroll
+// cacerts/, which leaves multi-tier deployments missing the upstream root.
+// Centralising the trust material here gives every consumer (Fabric MSP
+// loader inside the node, configtxgen reading these dirs to build channel
+// config MSPConfig.root_certs / intermediate_certs / tls_*_certs, and the
+// embedded TLS verifier inside fabric-x components) a complete chain.
+//
+// Missing source subdirectories (e.g. intermediatecerts/ when the chain is
+// one-tier) are silently skipped, so the one-tier CA layout passes through
+// unchanged.
+func (g *FabricCAGenerator) syncNodeMSPsFromOrg(orgMSPDir, cryptoDir, domain, orgType string) error {
+	var orgDirType, nodeType string
+	if orgType == "peer" {
+		orgDirType = "peerOrganizations"
+		nodeType = "peers"
+	} else {
+		orgDirType = "ordererOrganizations"
+		nodeType = "orderers"
+	}
+
+	nodesParent := filepath.Join(cryptoDir, orgDirType, domain, nodeType)
+	nodeMSPDirs := make([]string, 0)
+	if entries, err := os.ReadDir(nodesParent); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			nodeMSPDirs = append(nodeMSPDirs, filepath.Join(nodesParent, e.Name(), "msp"))
+		}
+	}
+
+	usersParent := filepath.Join(cryptoDir, orgDirType, domain, "users")
+	if entries, err := os.ReadDir(usersParent); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			nodeMSPDirs = append(nodeMSPDirs, filepath.Join(usersParent, e.Name(), "msp"))
+		}
+	}
+
+	srcCacerts := filepath.Join(orgMSPDir, "cacerts")
+	srcIntermediates := filepath.Join(orgMSPDir, "intermediatecerts")
+	srcTLSCacerts := filepath.Join(orgMSPDir, "tlscacerts")
+	srcTLSIntermediates := filepath.Join(orgMSPDir, "tlsintermediatecerts")
+
+	for _, mspDir := range nodeMSPDirs {
+		if _, err := os.Stat(mspDir); err != nil {
+			continue
+		}
+		// Overwrite cacerts/ — fabric-ca-client wrote only its direct issuer
+		// here; we replace it with the canonical root from /cainfo.
+		if err := g.replaceDirPEMs(srcCacerts, filepath.Join(mspDir, "cacerts")); err != nil {
+			return fmt.Errorf("sync cacerts to %s: %w", mspDir, err)
+		}
+		if err := copyDirPEMs(srcIntermediates, filepath.Join(mspDir, "intermediatecerts")); err != nil {
+			return fmt.Errorf("sync intermediatecerts to %s: %w", mspDir, err)
+		}
+		if err := copyDirPEMs(srcTLSCacerts, filepath.Join(mspDir, "tlscacerts")); err != nil {
+			return fmt.Errorf("sync tlscacerts to %s: %w", mspDir, err)
+		}
+		if err := copyDirPEMs(srcTLSIntermediates, filepath.Join(mspDir, "tlsintermediatecerts")); err != nil {
+			return fmt.Errorf("sync tlsintermediatecerts to %s: %w", mspDir, err)
+		}
+	}
+
+	// Refresh each node's tls/ca.crt with the full TLS chain bundle so the
+	// embedded TLS verifier accepts peer certs signed by the intermediate.
+	for _, e := range mustReadDirOrEmpty(nodesParent) {
+		if !e.IsDir() {
+			continue
+		}
+		tlsCAPath := filepath.Join(nodesParent, e.Name(), "tls", "ca.crt")
+		if _, err := os.Stat(tlsCAPath); err != nil {
+			continue
+		}
+		bundle, err := readPEMBundle(srcTLSCacerts, srcTLSIntermediates)
+		if err != nil {
+			return fmt.Errorf("read TLS CA bundle for %s: %w", e.Name(), err)
+		}
+		if len(bundle) == 0 {
+			continue
+		}
+		if err := os.WriteFile(tlsCAPath, bundle, perms.FileCert); err != nil {
+			return fmt.Errorf("write %s: %w", tlsCAPath, err)
+		}
+	}
+
+	return nil
+}
+
+// mustReadDirOrEmpty returns the dir entries or an empty slice if dir does
+// not exist or cannot be read. Used as a defensive helper in code that
+// iterates per-node directories that may legitimately be absent.
+func mustReadDirOrEmpty(dir string) []os.DirEntry {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	return entries
+}
+
+// replaceDirPEMs deletes existing *.pem files in dstDir then copies *.pem
+// files from srcDir. Used when the destination already contains stale
+// material (e.g. node MSP cacerts/ written by fabric-ca-client that
+// contains only the direct issuer).
+func (g *FabricCAGenerator) replaceDirPEMs(srcDir, dstDir string) error {
+	if entries, err := os.ReadDir(dstDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".pem" {
+				continue
+			}
+			_ = os.Remove(filepath.Join(dstDir, e.Name()))
+		}
+	}
+	return copyDirPEMs(srcDir, dstDir)
 }
 
 // fetchFabricCAChain hits a fabric-ca-server's /cainfo endpoint and returns
@@ -1161,62 +1304,23 @@ func (g *FabricCAGenerator) generatePeerUserOptimized(domain, caURL, tokenLabel 
 	}
 	g.logDetails("  Created admincerts: %s", adminCertPath)
 
-	// Use cached CA certificates if available, otherwise read from disk
-	userCACertsDir := filepath.Join(userDir, "cacerts")
-	if err := os.MkdirAll(userCACertsDir, perms.Dir); err != nil {
-		return fmt.Errorf("failed to create user cacerts directory: %w", err)
-	}
+	// Mirror the org-level MSP trust material into the user MSP. We copy the
+	// whole directories (cacerts / intermediatecerts / tlscacerts /
+	// tlsintermediatecerts) rather than a single cached cert so multi-tier
+	// CA deployments end up with the full chain; one-tier CAs degrade
+	// naturally since the intermediate dirs simply do not exist.
+	//
+	// The legacy caCertData / tlsCACertData arguments are kept for signature
+	// compatibility with the worker pool but no longer drive layout: the
+	// org-level MSP (written by createOrgMSP /cainfo before users run) is
+	// the single source of truth.
+	_ = caCertData
+	_ = tlsCACertData
 
-	if caCertData != nil {
-		// Write cached CA certificate
-		dstCACert := filepath.Join(userCACertsDir, fmt.Sprintf("ca.%s-cert.pem", domain))
-		if err := os.WriteFile(dstCACert, caCertData, perms.FileCert); err != nil {
-			return fmt.Errorf("failed to write CA certificate: %w", err)
-		}
-		g.logDetails("  Wrote cached CA certificate to user MSP: %s", dstCACert)
-	} else {
-		// Fallback: copy from org-level MSP
-		orgMSPDir := filepath.Join(cryptoDir, "peerOrganizations", domain, "msp")
-		orgCACertsDir := filepath.Join(orgMSPDir, "cacerts")
-		caCertFiles, err := os.ReadDir(orgCACertsDir)
-		if err != nil {
-			return fmt.Errorf("failed to read org cacerts directory: %w", err)
-		}
-		if len(caCertFiles) > 0 {
-			srcCACert := filepath.Join(orgCACertsDir, caCertFiles[0].Name())
-			dstCACert := filepath.Join(userCACertsDir, caCertFiles[0].Name())
-			if err := g.copyFile(srcCACert, dstCACert); err != nil {
-				return fmt.Errorf("failed to copy CA certificate to user MSP: %w", err)
-			}
-			g.logDetails("  Copied CA certificate to user MSP: %s", dstCACert)
-		}
-	}
-
-	// Use cached TLS CA certificate if available
-	userTLSCACertsDir := filepath.Join(userDir, "tlscacerts")
-	if err := os.MkdirAll(userTLSCACertsDir, perms.Dir); err != nil {
-		return fmt.Errorf("failed to create user tlscacerts directory: %w", err)
-	}
-
-	if tlsCACertData != nil {
-		// Write cached TLS CA certificate
-		dstTLSCACert := filepath.Join(userTLSCACertsDir, fmt.Sprintf("tlsca.%s-cert.pem", domain))
-		if err := os.WriteFile(dstTLSCACert, tlsCACertData, perms.FileCert); err != nil {
-			return fmt.Errorf("failed to write TLS CA certificate: %w", err)
-		}
-		g.logDetails("  Wrote cached TLS CA certificate: %s", dstTLSCACert)
-	} else {
-		// Fallback: copy from org-level MSP
-		orgMSPDir := filepath.Join(cryptoDir, "peerOrganizations", domain, "msp")
-		orgTLSCACertsDir := filepath.Join(orgMSPDir, "tlscacerts")
-		tlsCACertFiles, err := os.ReadDir(orgTLSCACertsDir)
-		if err == nil && len(tlsCACertFiles) > 0 {
-			srcTLSCACert := filepath.Join(orgTLSCACertsDir, tlsCACertFiles[0].Name())
-			dstTLSCACert := filepath.Join(userTLSCACertsDir, tlsCACertFiles[0].Name())
-			if err := g.copyFile(srcTLSCACert, dstTLSCACert); err != nil {
-				return fmt.Errorf("failed to copy TLS CA certificate: %w", err)
-			}
-			g.logDetails("  Copied TLS CA certificate: %s", dstTLSCACert)
+	orgMSPDir := filepath.Join(cryptoDir, "peerOrganizations", domain, "msp")
+	for _, sub := range []string{"cacerts", "intermediatecerts", "tlscacerts", "tlsintermediatecerts"} {
+		if err := copyDirPEMs(filepath.Join(orgMSPDir, sub), filepath.Join(userDir, sub)); err != nil {
+			return fmt.Errorf("copy %s to user MSP: %w", sub, err)
 		}
 	}
 
