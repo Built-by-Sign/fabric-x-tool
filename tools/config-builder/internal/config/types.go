@@ -41,23 +41,31 @@ type KMSConfig struct {
 
 // OrdererOrg represents an orderer organization
 type OrdererOrg struct {
-	Name                  string `yaml:"name"`
-	Domain                string `yaml:"domain"`
-	EnableOrganizationOUs bool   `yaml:"enable_organizational_units"`
-	Orderers              []Node `yaml:"orderers"`
-	KMSTokenLabel         string `yaml:"kms_token_label"` // Token label for KMS (organization-level)
-	KMSUserPin            string `yaml:"kms_user_pin"`    // User PIN for KMS access (organization-level, corresponds to token)
+	Name                  string   `yaml:"name"`
+	Domain                string   `yaml:"domain"`
+	EnableOrganizationOUs bool     `yaml:"enable_organizational_units"`
+	Orderers              []Node   `yaml:"orderers"`
+	KMSTokenLabel         string   `yaml:"kms_token_label"`         // Token label for KMS (organization-level)
+	KMSUserPin            string   `yaml:"kms_user_pin"`            // User PIN for KMS access (organization-level, corresponds to token)
+	CAURL                 string   `yaml:"ca_url,omitempty"`        // fabric-ca-server URL for MSP enroll (org-level override of kms.ca_url)
+	TLSCAURL              string   `yaml:"tls_ca_url,omitempty"`    // fabric-ca-server URL for TLS leaf enroll (falls back to CAURL)
+	KMSSetupPin           string   `yaml:"kms_setup_pin,omitempty"` // PKCS#11 BCCSP PIN used at setup-kms time (falls back to KMSUserPin)
+	TLSHosts              []string `yaml:"tls_hosts,omitempty"`     // Extra SAN entries applied to every node's TLS cert (LB aliases, prod IPs, ...)
 }
 
 // PeerOrg represents a peer organization
 type PeerOrg struct {
-	Name                  string `yaml:"name"`
-	Domain                string `yaml:"domain"`
-	EnableOrganizationOUs bool   `yaml:"enable_organizational_units"`
-	Peers                 []Node `yaml:"peers"`
-	Users                 []User `yaml:"users"`
-	KMSTokenLabel         string `yaml:"kms_token_label"` // Token label for KMS (organization-level)
-	KMSUserPin            string `yaml:"kms_user_pin"`    // User PIN for KMS access (organization-level, corresponds to token)
+	Name                  string   `yaml:"name"`
+	Domain                string   `yaml:"domain"`
+	EnableOrganizationOUs bool     `yaml:"enable_organizational_units"`
+	Peers                 []Node   `yaml:"peers"`
+	Users                 []User   `yaml:"users"`
+	KMSTokenLabel         string   `yaml:"kms_token_label"`         // Token label for KMS (organization-level)
+	KMSUserPin            string   `yaml:"kms_user_pin"`            // User PIN for KMS access (organization-level, corresponds to token)
+	CAURL                 string   `yaml:"ca_url,omitempty"`        // fabric-ca-server URL for MSP enroll (org-level override of kms.ca_url)
+	TLSCAURL              string   `yaml:"tls_ca_url,omitempty"`    // fabric-ca-server URL for TLS leaf enroll (falls back to CAURL)
+	KMSSetupPin           string   `yaml:"kms_setup_pin,omitempty"` // PKCS#11 BCCSP PIN used at setup-kms time (falls back to KMSUserPin)
+	TLSHosts              []string `yaml:"tls_hosts,omitempty"`     // Extra SAN entries applied to every node's TLS cert (LB aliases, prod IPs, ...)
 }
 
 // Node represents a network node (orderer or peer)

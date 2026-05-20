@@ -463,8 +463,9 @@ func (e *Engine) committerServerTLSConfig(containerConfigDir string) *CommitterT
 		//   1. ca.crt — cryptogen's tlsCA (signs internal committer/orderer mesh certs)
 		//   2. fabric-ca-root.pem — remote Fabric CA's TLS root (signs biz service
 		//      TLS certs issued via `fabric-ca-client enroll --enrollment.profile=tls`)
-		// fabric-ca-root.pem is dropped into each component's /config/tls/ by the
-		// cbdc-network Makefile fetch-fabric-ca-root target after config-builder runs.
+		// fabric-ca-root.pem is dropped into each component's /config/tls/ by
+		// copyCommitterTLS (sources it from build/fabric-ca-root.pem, which the
+		// Fabric-CA crypto step produces via fetchFabricCAChain).
 		tlsConfig.CACertPaths = []string{
 			filepath.Join(containerConfigDir, "tls", "ca.crt"),
 			filepath.Join(containerConfigDir, "tls", FabricCARootPEMFilename),
@@ -583,8 +584,35 @@ func (e *Engine) copyCommitterTLS(component *config.CommitterNode, componentConf
 	if err := e.copyDir(srcTLS, dstTLS); err != nil {
 		return fmt.Errorf("copy %s to %s: %w", srcTLS, dstTLS, err)
 	}
+	// Drop the orderer-org TLS CA bundle (written by the crypto step) into
+	// every committer's tls/ dir. CommitterServerTLSConfig.CACertPaths
+	// references this filename, so its presence is required when client auth
+	// is enabled. Missing the source bundle is non-fatal (cryptogen mode
+	// doesn't produce one).
+	if err := e.copyOrdererTLSBundle(componentConfigDir); err != nil {
+		return fmt.Errorf("copy %s for %s: %w", FabricCARootPEMFilename, component.Name, err)
+	}
 	e.log("Copied committer TLS for %s: %s", component.Name, dstTLS)
 	return nil
+}
+
+// copyOrdererTLSBundle drops build/<FabricCARootPEMFilename> into the given
+// committer config dir's tls/ subdir if the source bundle exists. The source
+// is produced by the Fabric-CA crypto step (writeOrdererTLSBundleFile).
+func (e *Engine) copyOrdererTLSBundle(componentConfigDir string) error {
+	absOutputDir, err := filepath.Abs(e.outputDir)
+	if err != nil {
+		return err
+	}
+	src := filepath.Join(absOutputDir, "build", FabricCARootPEMFilename)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		e.log("No %s bundle at %s; skipping committer drop", FabricCARootPEMFilename, src)
+		return nil
+	} else if err != nil {
+		return err
+	}
+	dst := filepath.Join(componentConfigDir, "tls", FabricCARootPEMFilename)
+	return e.copyFile(src, dst)
 }
 
 func (e *Engine) copyCoordinatorClientTLS(componentConfigDir string) error {
