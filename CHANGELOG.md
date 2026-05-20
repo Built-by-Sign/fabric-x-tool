@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.1.0] - 2026-05-20
+
+### Added
+- `config-builder` 支持每组织独立的 MSP CA 与 TLS CA URL 路由：新增 `ca_url`、`tls_ca_url` 字段，缺省 fallback 到全局 `kms.ca_url`，老 yaml 完全向后兼容。
+- 新增 `kms_setup_pin` 字段，将 setup 阶段的 PKCS#11 BCCSP PIN 与运行时 PIN 分离；缺省 fallback 到 `kms_user_pin`。
+- 新增 `tls_hosts` org 级字段，在节点 TLS 证书 SAN 中追加生产 IP / LB 别名，覆盖跨机器 biz 部署场景。
+- TLS 叶证书 CSR 携带 `OU=<node>-tls`（fabric-ca-server 端若仍在 csr.names 中设默认 OU 则会被覆盖；属服务端配置职责）。
+
+### Changed
+- `createOrgMSP` 改为通过 HTTP `GET /cainfo` 拉取并 base64 解码 CAChain，分别写入 `cacerts/` 与 `tlscacerts/`；不再依赖"从第一个节点的 enroll 输出复制 cacert"。
+- 新增 `writeOrdererTLSBundleFile` 在 crypto 阶段产出 `build/fabric-ca-root.pem`（所有 orderer-org TLS CA 链拼接），由 template engine 的 `copyCommitterTLS` 自动分发到每个 `committer-*/config/tls/`。替代 cbdc-network Makefile 的 `fetch-fabric-ca-root` target（去掉 curl + python3 宿主依赖）。
+- `GenerateOrgCrypto` 重构为 `GenerateOrgCryptoSplit`，MSP 与 TLS enroll 分别走各自 URL；单 server 模式下两者 fallback 到同一 URL，行为与之前一致。
+- `ResolveTLSHosts` 集中 SAN 来源拼接：FQDN + `node.Host` + 默认兜底 + org `tls_hosts`，去重后 FQDN 留在首位。
+
+### Other
+- 忽略 Claude Code 本地文件。
+
 ## [0.0.9] - 2026-04-23
 
 ### Added
