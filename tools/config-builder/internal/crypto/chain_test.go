@@ -164,6 +164,71 @@ func TestReadPEMBundle_SkipsMissingDirs(t *testing.T) {
 	}
 }
 
+func TestMergeIssuerCertsFromNodes_AddsIntermediateFromNodeCacerts(t *testing.T) {
+	// Simulate sign-ca-identity intermediate mode: /cainfo returns only the
+	// upstream root; fabric-ca-client enroll left the intermediate in each
+	// node's msp/cacerts/.
+	rootPEM, rootSigner := makeCert(t, "sign-ca-root", nil)
+	intermediatePEM, _ := makeCert(t, "sign-ca-identity", rootSigner)
+
+	cryptoDir := t.TempDir()
+	orgDir := filepath.Join(cryptoDir, "ordererOrganizations", "ord.example.com", "orderers")
+	for _, node := range []string{"orderer-router-1.ord.example.com", "orderer-batcher-1.ord.example.com"} {
+		mspCacerts := filepath.Join(orgDir, node, "msp", "cacerts")
+		if err := os.MkdirAll(mspCacerts, 0o755); err != nil {
+			t.Fatalf("mkdir node msp cacerts: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(mspCacerts, "ca.ord.example.com-cert.pem"), intermediatePEM, 0o644); err != nil {
+			t.Fatalf("write node cacert: %v", err)
+		}
+	}
+
+	// /cainfo chain has only root
+	chain := rootPEM
+	merged := mergeIssuerCertsFromNodes(chain, cryptoDir, "ordererOrganizations", "ord.example.com", filepath.Join("msp", "cacerts"))
+
+	roots, intermediates, err := splitChainPEMs(merged)
+	if err != nil {
+		t.Fatalf("split merged: %v", err)
+	}
+	if len(roots) != 1 || string(roots[0]) != string(rootPEM) {
+		t.Fatalf("merged chain missing root or wrong: got %d roots", len(roots))
+	}
+	if len(intermediates) != 1 || string(intermediates[0]) != string(intermediatePEM) {
+		t.Fatalf("merged chain missing intermediate or wrong: got %d intermediates", len(intermediates))
+	}
+}
+
+func TestMergeIssuerCertsFromNodes_NoopWhenNothingToAdd(t *testing.T) {
+	rootPEM, _ := makeCert(t, "sign-ca-root", nil)
+	// Empty cryptoDir; helper should return chain unchanged.
+	cryptoDir := t.TempDir()
+	merged := mergeIssuerCertsFromNodes(rootPEM, cryptoDir, "ordererOrganizations", "ord.example.com", filepath.Join("msp", "cacerts"))
+	if string(merged) != string(rootPEM) {
+		t.Fatalf("expected chain unchanged when no nodes present")
+	}
+}
+
+func TestMergeIssuerCertsFromNodes_SkipsDuplicates(t *testing.T) {
+	// One-tier CA: enroll-time cacert == /cainfo root. Helper must not
+	// duplicate.
+	rootPEM, _ := makeCert(t, "self-signed", nil)
+
+	cryptoDir := t.TempDir()
+	nodeMSP := filepath.Join(cryptoDir, "peerOrganizations", "org1.example.com", "peers", "peer0.org1.example.com", "msp", "cacerts")
+	if err := os.MkdirAll(nodeMSP, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeMSP, "ca.org1.example.com-cert.pem"), rootPEM, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	merged := mergeIssuerCertsFromNodes(rootPEM, cryptoDir, "peerOrganizations", "org1.example.com", filepath.Join("msp", "cacerts"))
+	if string(merged) != string(rootPEM) {
+		t.Fatalf("expected duplicate to be skipped, but chain changed")
+	}
+}
+
 func TestCopyDirPEMs_MissingSourceIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	if err := copyDirPEMs(filepath.Join(dir, "no-such-dir"), filepath.Join(dir, "dst")); err != nil {

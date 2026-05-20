@@ -753,6 +753,11 @@ func (g *FabricCAGenerator) createOrgMSP(domain, mspCAURL, tlsCAURL, cryptoDir s
 	if err != nil {
 		return fmt.Errorf("failed to fetch MSP CA chain from %s: %w", redactURL(mspCAURL), err)
 	}
+	// /cainfo on an intermediate fabric-ca-server returns only its parent
+	// trust anchor — not its own intermediate cert. Harvest that cert from
+	// any node MSP that fabric-ca-client just populated, so the chain
+	// becomes complete before we split it.
+	mspChain = mergeIssuerCertsFromNodes(mspChain, cryptoDir, orgDirType, domain, filepath.Join("msp", "cacerts"))
 	if err := writeChainToMSPDirs(mspChain, orgCACertsDir, orgIntermediateCertsDir, fmt.Sprintf("ca.%s", domain)); err != nil {
 		return fmt.Errorf("failed to write MSP CA chain: %w", err)
 	}
@@ -762,6 +767,9 @@ func (g *FabricCAGenerator) createOrgMSP(domain, mspCAURL, tlsCAURL, cryptoDir s
 	if err != nil {
 		return fmt.Errorf("failed to fetch TLS CA chain from %s: %w", redactURL(tlsCAURL), err)
 	}
+	// TLS counterpart: fabric-ca-client TLS enroll wrote the TLS issuer
+	// cert into each node's tls/ca.crt.
+	tlsChain = mergeIssuerCertsFromNodes(tlsChain, cryptoDir, orgDirType, domain, filepath.Join("tls", "ca.crt"))
 	if err := writeChainToMSPDirs(tlsChain, orgTLSCACertsDir, orgTLSIntermediateCertsDir, fmt.Sprintf("tlsca.%s", domain)); err != nil {
 		return fmt.Errorf("failed to write TLS CA chain: %w", err)
 	}

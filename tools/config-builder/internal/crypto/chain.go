@@ -130,6 +130,122 @@ func readPEMBundle(dirs ...string) ([]byte, error) {
 	return bundle, nil
 }
 
+// mergeIssuerCertsFromNodes augments a /cainfo chain with the direct
+// issuer cert(s) that fabric-ca-client left behind in already-enrolled
+// node MSPs.
+//
+// fabric-ca-server in intermediate mode only returns its parent trust
+// anchor from /cainfo — *not* its own intermediate cert. But every
+// node MSP populated by `fabric-ca-client enroll` contains that very
+// intermediate cert in `msp/cacerts/` (and the TLS counterpart in
+// `tls/ca.crt`). We pick any one of them, decode each PEM, and append
+// certs whose Subject is not already represented in the /cainfo chain.
+// Result: chain becomes <intermediate><root>, ready for splitChainPEMs.
+//
+// nodeSubPath is a relative path under each node directory:
+//   - "msp/cacerts"  → directory of PEMs (one per file)
+//   - "tls/ca.crt"   → single PEM bundle file
+//
+// Missing dirs / unreadable files are silently skipped; if nothing
+// extra is found the original chain is returned unchanged. One-tier
+// CAs degrade gracefully since enroll's cacerts then already equals
+// /cainfo's root and nothing new is appended.
+func mergeIssuerCertsFromNodes(chain []byte, cryptoDir, orgDirType, domain, nodeSubPath string) []byte {
+	var nodeType string
+	if orgDirType == "peerOrganizations" {
+		nodeType = "peers"
+	} else {
+		nodeType = "orderers"
+	}
+	nodesParent := filepath.Join(cryptoDir, orgDirType, domain, nodeType)
+
+	seen := make(map[string]bool)
+	for _, c := range parseCertsPEM(chain) {
+		seen[c.Subject.String()] = true
+	}
+
+	entries, err := os.ReadDir(nodesParent)
+	if err != nil {
+		return chain
+	}
+
+	var extra []byte
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		nodeDir := filepath.Join(nodesParent, e.Name())
+		// nodeSubPath can be a directory (msp/cacerts) or a single file (tls/ca.crt)
+		target := filepath.Join(nodeDir, nodeSubPath)
+		info, err := os.Stat(target)
+		if err != nil {
+			continue
+		}
+		var files []string
+		if info.IsDir() {
+			subEntries, _ := os.ReadDir(target)
+			for _, se := range subEntries {
+				if se.IsDir() || filepath.Ext(se.Name()) != ".pem" {
+					continue
+				}
+				files = append(files, filepath.Join(target, se.Name()))
+			}
+		} else {
+			files = []string{target}
+		}
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			for _, c := range parseCertsPEM(data) {
+				if seen[c.Subject.String()] {
+					continue
+				}
+				seen[c.Subject.String()] = true
+				extra = append(extra, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})...)
+			}
+		}
+	}
+
+	if len(extra) == 0 {
+		return chain
+	}
+	if len(chain) > 0 && chain[len(chain)-1] != '\n' {
+		chain = append(chain, '\n')
+	}
+	// Prepend extras so intermediates come before roots in the resulting
+	// chain — matches the canonical fabric-ca CAChain ordering and keeps
+	// splitChainPEMs output deterministic.
+	merged := make([]byte, 0, len(extra)+len(chain))
+	merged = append(merged, extra...)
+	merged = append(merged, chain...)
+	return merged
+}
+
+// parseCertsPEM decodes all CERTIFICATE blocks in a PEM bundle and
+// returns the parsed x509 certificates. Unparseable blocks are skipped.
+func parseCertsPEM(data []byte) []*x509.Certificate {
+	var out []*x509.Certificate
+	rest := data
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // copyDirPEMs copies every *.pem file from srcDir to dstDir, preserving file
 // names. A non-existent srcDir is silently treated as "nothing to copy", so
 // one-tier CAs (no intermediate dirs) pass through cleanly.
