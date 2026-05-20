@@ -642,9 +642,23 @@ func (g *FabricCAGenerator) GenerateAdminUser(domain, caURL, tokenLabel string, 
 	return nil
 }
 
-// generateMSPConfig generates config.yaml for MSP with NodeOUs configuration
+// generateMSPConfig generates config.yaml for MSP with NodeOUs configuration.
+//
+// Fabric MSP NodeOUs require each OUIdentifier.Certificate to point at the
+// CA that **directly** issues the role-bearing leaf certs. In a one-tier
+// CA deployment that is the root in cacerts/. In a multi-tier deployment
+// the leaf certs are signed by the intermediate CA, so the OUIdentifier
+// must reference intermediatecerts/<intermediate>.pem — pointing at the
+// root would make NodeOUs fail to recognise any role and downstream
+// `.member` policies would evaluate as 0 satisfied sub-policies.
+//
+// We detect multi-tier by scanning the org-level intermediatecerts/
+// directory (sibling of mspDir's enclosing org dir). The detection is
+// best-effort and falls back to cacerts/ if no intermediate is found.
 func (g *FabricCAGenerator) generateMSPConfig(mspDir, domain string) error {
 	configPath := filepath.Join(mspDir, "config.yaml")
+
+	ouCertPath := resolveNodeOUCertPath(mspDir, domain)
 
 	// Generate NodeOUs configuration
 	// Reference: Fabric MSP config with NodeOUs enabled
@@ -652,18 +666,18 @@ func (g *FabricCAGenerator) generateMSPConfig(mspDir, domain string) error {
 	configContent := fmt.Sprintf(`NodeOUs:
   Enable: true
   ClientOUIdentifier:
-    Certificate: cacerts/ca.%s-cert.pem
+    Certificate: %s
     OrganizationalUnitIdentifier: client
   PeerOUIdentifier:
-    Certificate: cacerts/ca.%s-cert.pem
+    Certificate: %s
     OrganizationalUnitIdentifier: peer
   AdminOUIdentifier:
-    Certificate: cacerts/ca.%s-cert.pem
+    Certificate: %s
     OrganizationalUnitIdentifier: admin
   OrdererOUIdentifier:
-    Certificate: cacerts/ca.%s-cert.pem
+    Certificate: %s
     OrganizationalUnitIdentifier: orderer
-`, domain, domain, domain, domain)
+`, ouCertPath, ouCertPath, ouCertPath, ouCertPath)
 
 	if err := os.WriteFile(configPath, []byte(configContent), perms.FileConfig); err != nil {
 		return fmt.Errorf("failed to write config.yaml: %w", err)
@@ -857,6 +871,14 @@ func (g *FabricCAGenerator) syncNodeMSPsFromOrg(orgMSPDir, cryptoDir, domain, or
 		}
 		if err := copyDirPEMs(srcTLSIntermediates, filepath.Join(mspDir, "tlsintermediatecerts")); err != nil {
 			return fmt.Errorf("sync tlsintermediatecerts to %s: %w", mspDir, err)
+		}
+		// Re-generate config.yaml now that intermediatecerts/ exists in this
+		// node MSP — the initial generateMSPConfig() call ran before sync and
+		// could only point NodeOUs at cacerts/. With the intermediate now
+		// present, resolveNodeOUCertPath picks it up and we get correct
+		// multi-tier NodeOUs classification.
+		if err := g.generateMSPConfig(mspDir, domain); err != nil {
+			return fmt.Errorf("regenerate MSP config at %s: %w", mspDir, err)
 		}
 	}
 

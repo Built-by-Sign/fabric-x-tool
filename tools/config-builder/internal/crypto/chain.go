@@ -246,6 +246,34 @@ func parseCertsPEM(data []byte) []*x509.Certificate {
 	return out
 }
 
+// resolveNodeOUCertPath returns the MSP-relative path that an MSP config.yaml
+// NodeOUs.<role>OUIdentifier.Certificate field should reference.
+//
+// In Fabric MSP, NodeOUs is the mechanism that classifies a leaf cert as
+// client/peer/admin/orderer; the classifier walks the leaf's Issuer field
+// up the chain until it finds a CA whose cert matches OUIdentifier.Certificate.
+// That CA must be the **direct** issuer of the OU-bearing leaf cert. In a
+// multi-tier CA deployment the direct issuer is the intermediate, not the
+// root — pointing OUIdentifier at the root makes NodeOUs silently fail to
+// classify any role and downstream `.member` policies evaluate to 0 satisfied
+// sub-policies.
+//
+// We detect "multi-tier" by checking for a non-empty intermediatecerts/
+// directory inside the MSP. If present, the first *.pem in that directory
+// is used as the OU anchor; otherwise we fall back to cacerts/.
+func resolveNodeOUCertPath(mspDir, domain string) string {
+	intermediateDir := filepath.Join(mspDir, "intermediatecerts")
+	if entries, err := os.ReadDir(intermediateDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".pem" {
+				continue
+			}
+			return filepath.Join("intermediatecerts", e.Name())
+		}
+	}
+	return fmt.Sprintf("cacerts/ca.%s-cert.pem", domain)
+}
+
 // copyDirPEMs copies every *.pem file from srcDir to dstDir, preserving file
 // names. A non-existent srcDir is silently treated as "nothing to copy", so
 // one-tier CAs (no intermediate dirs) pass through cleanly.
