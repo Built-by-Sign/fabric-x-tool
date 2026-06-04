@@ -53,8 +53,4 @@ General:
             Security: {{ .BCCSP.SW.Security }}
 {{- end }}
 {{- end }}
-{{- if .MonitoringListenPort }}
-    MonitoringListenAddress: {{ .MonitoringListenAddress }}
-    MonitoringListenPort: {{ .MonitoringListenPort }}
-{{- end }}
 {{ end -}}
