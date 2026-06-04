@@ -1,0 +1,19 @@
+# Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+# roles/orderer/templates/sections/operations.yaml.j2 (adapted to Go text/template)
+# Aligned against fabric-x-orderer v1.0.0 (#853).
+{{ define "operations" -}}
+{{- if .MonitoringListenPort }}
+# ---------------------------------------------------------------------------
+# Operations Configuration
+# This configures the operations server endpoint for metrics and operations APIs.
+# ---------------------------------------------------------------------------
+Operations:
+    ListenAddress: {{ .MonitoringListenAddress }}
+    ListenPort: {{ .MonitoringListenPort }}
+    # TLS for the operations endpoint. Upstream supports TLS/mTLS here
+    # (orderer_operations_use_tls / orderer_operations_use_mtls); config-builder
+    # has no operations-TLS input yet, so it stays explicitly disabled.
+    TLS:
+        Enabled: false
+{{- end }}
+{{ end -}}

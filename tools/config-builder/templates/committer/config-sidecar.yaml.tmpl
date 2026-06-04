@@ -1,6 +1,6 @@
 # Derived from LF-Decentralized-Trust-labs/fabric-x-ansible-collection
 # roles/committer/templates/config-sidecar.yaml.j2 (adapted to Go text/template)
-# Aligned against fabric-x-committer v0.2.0.
+# Aligned against fabric-x-committer v1.0.0.
 #
 # v0.2.0 schema changes vs v0.1.9:
 #   - orderer.channel-id / organizations / consensus-type removed;
@@ -18,17 +18,12 @@
 orderer:
   fault-tolerance-level: BFT
   latest-known-config-block-path: {{ .GenesisBlockPath }}
-  # TODO(upstream): remove this flag + fork dependency once fabric-x-orderer
-  # emits a real MSP-serialized identity from ECDSASigner.Serialize (today
-  # it returns the literal string "creator"; see node/crypto/signer.go TODO).
-  # Tracking PRs:
-  #   - hyperledger/fabric-x-committer#552 (our escape hatch upstream)
-  #   - hyperledger/fabric-x-orderer    (needs Serialize fix; no PR yet)
-  # Without this flag, v0.2.0+ committers reject every non-genesis block with
-  # "implicit policy evaluation failed - 0 sub-policies satisfied". Requires
-  # the Built-by-Sign/fabric-x-committer fork (feat/skip-block-signature-verification)
-  # because upstream does not yet accept this key.
-  skip-block-signature-verification: true
+  # Note: the former `skip-block-signature-verification` escape hatch (fork
+  # Built-by-Sign/fabric-x-committer, upstream PR #552) is retired. The
+  # alpha-era rejections ("0 sub-policies satisfied") were caused by the
+  # sidecar not detecting arma consensus and skipping the IdentifierHeader
+  # BFT verification path — fixed upstream in fabric-x-committer#597,
+  # included in v1.0.0. BFT verification now runs normally.
 {{- if .OrdererTLS }}
   tls:
 {{- if .OrdererTLS.CommonCACertPaths }}
