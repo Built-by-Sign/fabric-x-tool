@@ -265,7 +265,7 @@ func (g *FabricCAGenerator) GeneratePeerOrgCrypto(org config.PeerOrg) error {
 		if _, exists := seenPeers[committerName]; exists {
 			continue
 		}
-		committerNode := config.Node{Name: committerName}
+		committerNode := config.Node{Name: committerName, Host: g.committerHostByName(committerName)}
 		nodes = append(nodes, NodeInfo{
 			Name:     committerName,
 			UserPin:  setupPin,
@@ -319,6 +319,18 @@ func nonAdminUsers(users []config.User) []config.User {
 		filtered = append(filtered, user)
 	}
 	return filtered
+}
+
+func (g *FabricCAGenerator) committerHostByName(name string) string {
+	if g.config.Committer == nil {
+		return ""
+	}
+	for _, comp := range g.config.Committer.Components {
+		if comp.Name == name {
+			return comp.Host
+		}
+	}
+	return ""
 }
 
 func (g *FabricCAGenerator) committerPeerNamesForOrg(org *config.PeerOrg) []string {
