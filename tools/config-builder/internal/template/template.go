@@ -329,6 +329,13 @@ func monitoringPort(c *config.CommitterNode) int {
 	return config.DefaultMonitoringPort(c.Port)
 }
 
+func resolveHost(host, fallback string) string {
+	if host != "" {
+		return host
+	}
+	return fallback
+}
+
 // buildCommitterTemplateData builds template data for committer components
 func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) (*CommitterTemplateData, error) {
 	// Use container path for configDir (matches Ansible's committer_docker_config_dir = "/config")
@@ -356,14 +363,15 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 	// Collect verifier and validator endpoints for coordinator
 	if componentType == "coordinator" {
 		for _, comp := range e.config.Committer.Components {
+			h := resolveHost(comp.Host, dockerHost)
 			if comp.Type == "verifier" {
 				data.VerifierEndpoints = append(data.VerifierEndpoints, EndpointConfig{
-					Host: dockerHost,
+					Host: h,
 					Port: comp.Port,
 				})
 			} else if comp.Type == "validator" {
 				data.ValidatorEndpoints = append(data.ValidatorEndpoints, EndpointConfig{
-					Host: dockerHost,
+					Host: h,
 					Port: comp.Port,
 				})
 			}
@@ -385,7 +393,7 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 	if componentType == "sidecar" {
 		for _, comp := range e.config.Committer.Components {
 			if comp.Type == "coordinator" {
-				data.CommitterHost = dockerHost
+				data.CommitterHost = resolveHost(comp.Host, dockerHost)
 				data.CommitterPort = comp.Port
 				break
 			}
@@ -520,7 +528,7 @@ func (e *Engine) buildCommitterDatabaseConfig(dockerHost string) (*DatabaseConfi
 			}
 			cfg := &DatabaseConfig{
 				Type:        "postgres",
-				Endpoints:   []string{fmt.Sprintf("%s:%d", dockerHost, dbPort)},
+				Endpoints:   []string{fmt.Sprintf("%s:%d", resolveHost(comp.Host, dockerHost), dbPort)},
 				User:        comp.PostgresUser,
 				Password:    comp.PostgresPassword,
 				DBName:      comp.PostgresDB,
