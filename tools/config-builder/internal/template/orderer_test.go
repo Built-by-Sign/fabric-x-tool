@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"config-builder/internal/bccsp"
 	"config-builder/internal/config"
 )
 
@@ -93,6 +94,59 @@ func TestOrdererTemplatesSkipOperationsWhenMonitoringDisabled(t *testing.T) {
 	for _, banned := range []string{"Operations:", "Metrics:"} {
 		if strings.Contains(rendered, banned) {
 			t.Fatalf("router config should omit %q when monitoring is disabled:\n%s", banned, rendered)
+		}
+	}
+}
+
+func TestOrdererTemplateEmitsLowercasePKCS11LeafKeys(t *testing.T) {
+	engine := NewEngine(&config.NetworkConfig{ChannelID: "arma"}, t.TempDir(), false)
+
+	data := &OrdererTemplateData{
+		PartyID:       1,
+		OrdererType:   "router",
+		ConfigDir:     "/config",
+		ListenAddress: "0.0.0.0",
+		ListenPort:    7050,
+		MSPID:         "OrdererOrg1MSP",
+		ChannelID:     "arma",
+		BCCSP: bccsp.GenerateKMSConfig(
+			"unused-endpoint",
+			"test-token",
+			"test-pin",
+		),
+	}
+	tmpl, err := engine.getOrdererTemplate("router")
+	if err != nil {
+		t.Fatalf("getOrdererTemplate(router): %v", err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, data); err != nil {
+		t.Fatalf("execute router template: %v", err)
+	}
+	rendered := out.String()
+
+	for _, want := range []string{
+		"PKCS11:",
+		"library: /usr/local/lib/libkms_pkcs11.so",
+		"pin: \"test-pin\"",
+		"label: \"test-token\"",
+		"hash: SHA2",
+		"security: 256",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("router config missing %q:\n%s", want, rendered)
+		}
+	}
+
+	for _, banned := range []string{
+		"Library:",
+		"Pin:",
+		"Label:",
+		"Hash:",
+		"Security:",
+	} {
+		if strings.Contains(rendered, banned) {
+			t.Fatalf("router config still contains uppercase PKCS11 leaf key %q:\n%s", banned, rendered)
 		}
 	}
 }

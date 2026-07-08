@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `config-builder` orderer PKCS11 BCCSP template now emits lowercase leaf keys (`library` / `pin` / `label` / `hash` / `security`) so Fabric-X orderer can parse generated configs without a downstream YAML tag patch.
+
 
 ## [0.1.0] - 2026-05-20
 

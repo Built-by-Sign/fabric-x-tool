@@ -41,11 +41,11 @@ General:
         Default: {{ .BCCSP.Default }}
 {{- if .BCCSP.PKCS11 }}
         PKCS11:
-            Library: {{ .BCCSP.PKCS11.Library }}
-            Pin: "{{ .BCCSP.PKCS11.Pin }}"
-            Label: "{{ .BCCSP.PKCS11.Label }}"
-            Hash: {{ .BCCSP.PKCS11.Hash }}
-            Security: {{ .BCCSP.PKCS11.Security }}
+            library: {{ .BCCSP.PKCS11.Library }}
+            pin: "{{ .BCCSP.PKCS11.Pin }}"
+            label: "{{ .BCCSP.PKCS11.Label }}"
+            hash: {{ .BCCSP.PKCS11.Hash }}
+            security: {{ .BCCSP.PKCS11.Security }}
 {{- end }}
 {{- if .BCCSP.SW }}
         SW:
