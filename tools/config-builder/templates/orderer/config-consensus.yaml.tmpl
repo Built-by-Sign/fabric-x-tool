@@ -10,7 +10,7 @@
 
 {{ template "party-id" . }}
 Consensus:
-    WALDir: {{ .ConfigDir }}/wal
+    WALDir: {{ .RuntimeDir }}/wal
 {{ template "general" . }}
 {{ template "filestore" . }}
 {{ template "operations" . }}

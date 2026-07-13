@@ -15,6 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const runtimeDataRoot = "${FABRIC_X_RUNTIME_DATA_ROOT:-./runtime-data}"
+
 // Generator generates docker-compose.yaml files
 type Generator struct {
 	config    *config.NetworkConfig
@@ -44,6 +46,9 @@ func (g *Generator) Generate() error {
 	if err != nil {
 		return err
 	}
+	if err := g.prepareDefaultRuntimeDataDirs(compose, absOutputDir); err != nil {
+		return err
+	}
 
 	// Marshal to YAML
 	data, err := yaml.Marshal(compose)
@@ -57,6 +62,25 @@ func (g *Generator) Generate() error {
 	}
 
 	g.log("Generated docker-compose.yaml at: %s", composePath)
+	return nil
+}
+
+func (g *Generator) prepareDefaultRuntimeDataDirs(compose *Compose, outputDir string) error {
+	if strings.TrimSpace(os.Getenv("FABRIC_X_RUNTIME_DATA_ROOT")) != "" {
+		return nil
+	}
+	prefix := runtimeDataRoot + "/"
+	for _, service := range compose.Services {
+		for _, volume := range service.Volumes {
+			if !strings.HasPrefix(volume, prefix) {
+				continue
+			}
+			relative := strings.SplitN(strings.TrimPrefix(volume, prefix), ":", 2)[0]
+			if err := os.MkdirAll(filepath.Join(outputDir, "runtime-data", relative), perms.Dir); err != nil {
+				return fmt.Errorf("create default runtime data directory %q: %w", relative, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -282,6 +306,10 @@ func normalizePathForDockerCompose(path string) string {
 	return path
 }
 
+func runtimeDataMount(component, target string) string {
+	return fmt.Sprintf("%s/%s:%s", runtimeDataRoot, component, target)
+}
+
 // buildOrdererService builds a service definition for an orderer component
 func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererOrg, orderer *config.Node, outputDir string) (Service, error) {
 	configDir := filepath.Join(outputDir, "local-deployment", serviceName, "config")
@@ -316,6 +344,7 @@ func (g *Generator) buildOrdererService(serviceName string, org *config.OrdererO
 	// Mount config directory
 	// Normalize path for docker-compose (convert /workspace/ to ./ for container-generated configs)
 	service.Volumes = append(service.Volumes, fmt.Sprintf("%s:/config", normalizePathForDockerCompose(configDir)))
+	service.Volumes = append(service.Volumes, runtimeDataMount(serviceName, "/runtime"))
 
 	// Add KMS environment variables if KMS is enabled
 	if g.config.KMS != nil && g.config.KMS.Enabled {
@@ -444,12 +473,11 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			service.Command = []string{"postgres", "-c", fmt.Sprintf("port=%d", dbPort)}
 		}
 		service.Ports = append(service.Ports, fmt.Sprintf("%d:%d", dbPort, dbPort))
-		// Mount the generated local deployment data directory, matching the
-		// non-Kubernetes Ansible layout where PostgreSQL persists under the
-		// component's local deployment tree.
-		dataDir := filepath.Join(outputDir, "local-deployment", componentDirName, "data")
+		// PostgreSQL 18 declares /var/lib/postgresql as a VOLUME. Mount the
+		// parent directory so Docker does not create an anonymous volume beside
+		// the bind-mounted PGDATA directory.
 		service.Volumes = append(service.Volumes,
-			fmt.Sprintf("%s:/var/lib/postgresql/data", normalizePathForDockerCompose(dataDir)),
+			runtimeDataMount(componentDirName, "/var/lib/postgresql"),
 		)
 		if g.config.TLS != nil && g.config.TLS.Enabled {
 			service.Volumes = append(service.Volumes,
@@ -495,6 +523,7 @@ func (g *Generator) buildCommitterService(serviceName string, component *config.
 			"start", "sidecar",
 			"--config", fmt.Sprintf("/config/%s", configFile),
 		}
+		service.Volumes = append(service.Volumes, runtimeDataMount(componentDirName, "/runtime"))
 	case "query-service":
 		service.Command = []string{
 			"start", "query",

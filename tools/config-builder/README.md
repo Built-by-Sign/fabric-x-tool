@@ -200,6 +200,22 @@ cd ./out
 docker-compose up -d
 ```
 
+Node configuration and cryptographic material remain under `./out`. Runtime
+state is mounted separately under `./out/runtime-data` by default. Set an
+absolute host path when the runtime data must live elsewhere:
+
+```bash
+FABRIC_X_RUNTIME_DATA_ROOT=/path/to/network-data docker compose up -d
+```
+
+Orderer and sidecar containers read static files from `/config` and write state
+under `/runtime`. The local committer PostgreSQL service binds
+`<runtime-root>/committer-db` to `/var/lib/postgresql`, with PGDATA under its
+`data/pgdata` child. Mounting the parent also overrides the volume declared by
+PostgreSQL 18 images, so Docker does not create an anonymous volume. Create a
+custom runtime data root before starting Compose so bind mount ownership
+matches the invoking user.
+
 ## Commands
 
 ### setup

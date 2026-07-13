@@ -22,6 +22,7 @@ func TestOrdererTemplatesEmitOperationsAndMetrics(t *testing.T) {
 			OrdererType:             ordererType,
 			ShardID:                 1,
 			ConfigDir:               "/config",
+			RuntimeDir:              "/runtime",
 			ListenAddress:           "0.0.0.0",
 			ListenPort:              7052,
 			MonitoringListenAddress: "0.0.0.0",
@@ -49,10 +50,14 @@ func TestOrdererTemplatesEmitOperationsAndMetrics(t *testing.T) {
 			"ListenPort: 7062",
 			"Provider: prometheus",
 			"MetricsLogInterval: 0s",
+			"Location: /runtime/store",
 		} {
 			if !strings.Contains(rendered, want) {
 				t.Fatalf("%s config missing %q:\n%s", ordererType, want, rendered)
 			}
+		}
+		if ordererType == "consensus" && !strings.Contains(rendered, "WALDir: /runtime/wal") {
+			t.Fatalf("consensus config missing runtime WAL path:\n%s", rendered)
 		}
 		// Pre-v1.0.0 keys must be gone from the General section.
 		for _, banned := range []string{
@@ -76,6 +81,7 @@ func TestOrdererTemplatesSkipOperationsWhenMonitoringDisabled(t *testing.T) {
 		PartyID:       1,
 		OrdererType:   "router",
 		ConfigDir:     "/config",
+		RuntimeDir:    "/runtime",
 		ListenAddress: "0.0.0.0",
 		ListenPort:    7052,
 		MSPID:         "OrdererOrg1MSP",
@@ -105,6 +111,7 @@ func TestOrdererTemplateEmitsLowercasePKCS11LeafKeys(t *testing.T) {
 		PartyID:       1,
 		OrdererType:   "router",
 		ConfigDir:     "/config",
+		RuntimeDir:    "/runtime",
 		ListenAddress: "0.0.0.0",
 		ListenPort:    7050,
 		MSPID:         "OrdererOrg1MSP",

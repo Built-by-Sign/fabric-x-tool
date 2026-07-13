@@ -92,7 +92,7 @@ func (e *Engine) generateOrdererConfigs() error {
 			componentIndex := componentIndices[componentType]
 
 			// Create node config directory following Ansible structure: orderer-{type}-{index}/config/
-				componentDirName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
+			componentDirName := fmt.Sprintf("orderer-%s-%d", componentType, componentIndex)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
 			nodeConfigDir := filepath.Join(componentDir, "config")
 			if err := os.MkdirAll(nodeConfigDir, perms.Dir); err != nil {
@@ -117,10 +117,8 @@ func (e *Engine) generateOrdererConfigs() error {
 				return fmt.Errorf("failed to copy crypto materials: %w", err)
 			}
 
-			// Note: Store directory is NOT created here (matching Ansible behavior)
-			// Ansible does not create the store directory during setup
-			// The orderer container will create it automatically at startup based on
-			// the FileStore: Location: /config/store configuration
+			// Runtime directories are created by the deployment environment, outside
+			// the generated static configuration tree.
 
 			e.log("Generated config for orderer: %s (%s)", componentDirName, componentType)
 		}
@@ -141,10 +139,6 @@ func (e *Engine) generateCommitterConfigs() error {
 		if component.Type == "db" {
 			componentDirName := e.config.CommitterComponentDirName(component)
 			componentDir := filepath.Join(absOutputDir, "local-deployment", componentDirName)
-			dataDir := filepath.Join(componentDir, "data")
-			if err := os.MkdirAll(dataDir, perms.Dir); err != nil {
-				return fmt.Errorf("failed to create committer db data directory: %w", err)
-			}
 			if e.getTLSEnabled() {
 				componentConfigDir := filepath.Join(componentDir, "config")
 				if err := os.MkdirAll(componentConfigDir, perms.Dir); err != nil {
@@ -154,7 +148,7 @@ func (e *Engine) generateCommitterConfigs() error {
 					return fmt.Errorf("failed to copy committer db TLS for %s: %w", componentDirName, err)
 				}
 			}
-			e.log("Created data directory for committer: %s (%s)", componentDirName, component.Type)
+			e.log("Generated config for committer: %s (%s)", componentDirName, component.Type)
 			continue
 		}
 
@@ -250,6 +244,7 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 	// Use container path for configDir (matches Ansible's orderer_docker_config_dir = "/config")
 	// The configDir parameter is the host path, but we need container paths in the config file
 	containerConfigDir := "/config"
+	containerRuntimeDir := "/runtime"
 
 	bccsConfig, err := e.buildBCCSPConfig(org.KMSTokenLabel, func() (string, error) {
 		pin, err := org.ResolveKMSUserPin()
@@ -281,6 +276,7 @@ func (e *Engine) buildOrdererTemplateData(ordererType string, org *config.Ordere
 		OrdererType:             ordererType,
 		ShardID:                 node.ShardID,
 		ConfigDir:               containerConfigDir, // Container path, not host path
+		RuntimeDir:              containerRuntimeDir,
 		CryptoDir:               cryptoDir,
 		GenesisDir:              genesisDir,
 		ListenAddress:           "0.0.0.0",
@@ -340,6 +336,7 @@ func resolveHost(host, fallback string) string {
 func (e *Engine) buildCommitterTemplateData(componentType string, component *config.CommitterNode, configDir string) (*CommitterTemplateData, error) {
 	// Use container path for configDir (matches Ansible's committer_docker_config_dir = "/config")
 	containerConfigDir := "/config"
+	containerRuntimeDir := "/runtime"
 
 	// Default host for container-to-host communication on Mac Docker Desktop
 	// This matches Ansible's ansible_host: "host.docker.internal"
@@ -349,6 +346,7 @@ func (e *Engine) buildCommitterTemplateData(componentType string, component *con
 		ComponentType:    componentType,
 		ComponentName:    component.Name,
 		ConfigDir:        containerConfigDir, // Container path, not host path
+		RuntimeDir:       containerRuntimeDir,
 		Host:             component.Host,
 		Port:             component.Port,
 		MonitoringPort:   monitoringPort(component),

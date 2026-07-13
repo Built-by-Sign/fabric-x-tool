@@ -14,6 +14,7 @@ type OrdererTemplateData struct {
 	OrdererType             string
 	ShardID                 int
 	ConfigDir               string
+	RuntimeDir              string
 	CryptoDir               string
 	GenesisDir              string
 	ListenAddress           string

@@ -45,6 +45,7 @@ func TestSidecarTemplateV020Schema(t *testing.T) {
 	for _, want := range []string{
 		"msp-id: Org1MSP",
 		"msp-dir: /config/msp",
+		"path: /runtime/ledger",
 		"fault-tolerance-level: BFT",
 		"latest-known-config-block-path: /config/genesis.block",
 	} {
