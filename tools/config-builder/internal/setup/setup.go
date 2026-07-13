@@ -147,6 +147,9 @@ func (r *Runner) generateCryptoMaterials() error {
 	if err := generator.Generate(); err != nil {
 		return err
 	}
+	if err := crypto.PopulateKnownCerts(r.config, r.config.OutputDir); err != nil {
+		return fmt.Errorf("failed to populate organization known certificates: %w", err)
+	}
 
 	r.log("Crypto materials generated successfully")
 	return nil
