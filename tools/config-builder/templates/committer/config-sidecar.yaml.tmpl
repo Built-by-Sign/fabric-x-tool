@@ -69,7 +69,7 @@ committer:
     mode: {{ .CommitterTLS.Mode }}
 {{- end }}
 ledger:
-  path: {{ .ConfigDir }}/ledger
+  path: {{ .RuntimeDir }}/ledger
 last-committed-block-set-interval: 5s
 {{ template "monitoring" . }}
 {{ template "logging" . }}

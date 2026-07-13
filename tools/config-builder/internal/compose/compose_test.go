@@ -1,11 +1,48 @@
 package compose
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"config-builder/internal/config"
 )
+
+func TestPrepareDefaultRuntimeDataDirs(t *testing.T) {
+	t.Setenv("FABRIC_X_RUNTIME_DATA_ROOT", "")
+	outputDir := t.TempDir()
+	g := NewGenerator(&config.NetworkConfig{}, outputDir, false)
+	compose := &Compose{Services: map[string]Service{
+		"orderer": {Volumes: []string{runtimeDataMount("orderer-router-1", "/runtime")}},
+		"db":      {Volumes: []string{runtimeDataMount("committer-db", "/var/lib/postgresql")}},
+	}}
+
+	if err := g.prepareDefaultRuntimeDataDirs(compose, outputDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{"orderer-router-1", "committer-db"} {
+		if info, err := os.Stat(filepath.Join(outputDir, "runtime-data", relative)); err != nil || !info.IsDir() {
+			t.Fatalf("default runtime data directory %q was not created", relative)
+		}
+	}
+}
+
+func TestPrepareDefaultRuntimeDataDirsSkipsCustomRoot(t *testing.T) {
+	t.Setenv("FABRIC_X_RUNTIME_DATA_ROOT", "/custom/runtime-data")
+	outputDir := t.TempDir()
+	g := NewGenerator(&config.NetworkConfig{}, outputDir, false)
+	compose := &Compose{Services: map[string]Service{
+		"orderer": {Volumes: []string{runtimeDataMount("orderer-router-1", "/runtime")}},
+	}}
+
+	if err := g.prepareDefaultRuntimeDataDirs(compose, outputDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "runtime-data")); !os.IsNotExist(err) {
+		t.Fatal("default runtime data root was created for a custom root")
+	}
+}
 
 func TestBuildCommitterServiceDBMountsLocalDataDir(t *testing.T) {
 	g := NewGenerator(&config.NetworkConfig{
@@ -31,11 +68,11 @@ func TestBuildCommitterServiceDBMountsLocalDataDir(t *testing.T) {
 	if service.Image != "postgres:16" {
 		t.Fatalf("unexpected image: %s", service.Image)
 	}
-	if len(service.Volumes) != 1 || !strings.Contains(service.Volumes[0], "/var/lib/postgresql/data") {
+	if len(service.Volumes) != 1 || !strings.HasSuffix(service.Volumes[0], ":/var/lib/postgresql") {
 		t.Fatalf("expected db data volume mount, got %#v", service.Volumes)
 	}
-	if !strings.Contains(service.Volumes[0], "local-deployment/committer-db/data") {
-		t.Fatalf("expected local deployment data dir mount, got %#v", service.Volumes)
+	if !strings.Contains(service.Volumes[0], "${FABRIC_X_RUNTIME_DATA_ROOT:-./runtime-data}/committer-db") {
+		t.Fatalf("expected runtime data dir mount, got %#v", service.Volumes)
 	}
 	if service.WorkingDir != "" {
 		t.Fatalf("db service should not set working_dir, got %q", service.WorkingDir)
@@ -287,6 +324,43 @@ func TestBuildOrdererServiceUsesDefaultPort(t *testing.T) {
 	}
 	if !foundServicePort || !foundMonitoringPort {
 		t.Fatalf("expected default service and monitoring ports, got %#v", service.Ports)
+	}
+	if !containsString(service.Volumes, "${FABRIC_X_RUNTIME_DATA_ROOT:-./runtime-data}/orderer-assembler-1:/runtime") {
+		t.Fatalf("expected orderer store outside the config tree, got %#v", service.Volumes)
+	}
+}
+
+func TestBuildConsensusAndSidecarMountRuntimeDataOutsideConfig(t *testing.T) {
+	g := NewGenerator(&config.NetworkConfig{
+		Docker: config.DockerConfig{
+			Network:        "fx-net",
+			NetworkDriver:  "bridge",
+			OrdererImage:   "hyperledger/fabric-x-orderer:local",
+			CommitterImage: "hyperledger/fabric-x-committer:local",
+		},
+	}, t.TempDir(), false)
+
+	consensus, err := g.buildOrdererService("orderer-consensus-1", &config.OrdererOrg{
+		Name: "Orderer",
+	}, &config.Node{Type: "consensus"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "${FABRIC_X_RUNTIME_DATA_ROOT:-./runtime-data}/orderer-consensus-1:/runtime"
+	if !containsString(consensus.Volumes, want) {
+		t.Fatalf("consensus runtime mount missing %q: %#v", want, consensus.Volumes)
+	}
+
+	sidecar, err := g.buildCommitterService("committer-sidecar", &config.CommitterNode{
+		Name: "committer-sidecar",
+		Type: "sidecar",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = "${FABRIC_X_RUNTIME_DATA_ROOT:-./runtime-data}/committer-sidecar:/runtime"
+	if !containsString(sidecar.Volumes, want) {
+		t.Fatalf("sidecar runtime mount missing %q: %#v", want, sidecar.Volumes)
 	}
 }
 

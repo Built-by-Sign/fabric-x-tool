@@ -16,26 +16,27 @@ type EndpointConfig struct {
 
 // CommitterTemplateData holds data for committer component configuration templates
 type CommitterTemplateData struct {
-	ComponentType        string
-	ComponentName        string
-	ConfigDir            string
-	Host                 string
-	Port                 int
-	MonitoringPort       int
-	Database             *DatabaseConfig
-	ChannelID            string
-	CommitterHost        string
-	CommitterPort        int
-	GenesisBlockPath     string
-	VerifierEndpoints    []EndpointConfig // For coordinator: list of verifier endpoints
-	ValidatorEndpoints   []EndpointConfig // For coordinator: list of validator endpoints
-	VerifierParallelism  int
-	ServerTLS            *CommitterTLSConfig
-	MonitoringTLS        *CommitterTLSConfig
-	VerifierTLS          *CommitterTLSConfig
-	ValidatorTLS         *CommitterTLSConfig
-	OrdererTLS           *CommitterTLSConfig
-	CommitterTLS         *CommitterTLSConfig
+	ComponentType       string
+	ComponentName       string
+	ConfigDir           string
+	RuntimeDir          string
+	Host                string
+	Port                int
+	MonitoringPort      int
+	Database            *DatabaseConfig
+	ChannelID           string
+	CommitterHost       string
+	CommitterPort       int
+	GenesisBlockPath    string
+	VerifierEndpoints   []EndpointConfig // For coordinator: list of verifier endpoints
+	ValidatorEndpoints  []EndpointConfig // For coordinator: list of validator endpoints
+	VerifierParallelism int
+	ServerTLS           *CommitterTLSConfig
+	MonitoringTLS       *CommitterTLSConfig
+	VerifierTLS         *CommitterTLSConfig
+	ValidatorTLS        *CommitterTLSConfig
+	OrdererTLS          *CommitterTLSConfig
+	CommitterTLS        *CommitterTLSConfig
 
 	// For sidecar v0.1.9+: MSP identity required for orderer deliver authorization.
 	// Signer returns nil when MSPID or MSPDir is empty, causing orderer to reject
