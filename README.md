@@ -79,3 +79,19 @@ The project uses GitHub Actions to automatically build and publish Docker images
 - Manual workflow dispatch - Can be triggered manually from GitHub Actions UI
 
 No additional configuration is required - the workflow uses the built-in `GITHUB_TOKEN` for authentication.
+
+## issue-biz-cert
+
+One-command TLS certificate issuance for biz components against a sign-ca
+(fabric-ca) server — wraps admin enroll, identity registration and the
+tls-profile enrollment, and collects `<name>.crt` / `<name>.key` /
+`ca-chain.pem` under stable names. Idempotent across re-runs.
+
+```bash
+docker run --rm --network host -u "$(id -u)" -v "$PWD:/out" \
+  ghcr.io/built-by-sign/fabric-x-tool \
+  issue-biz-cert --ca-url http://admin:adminpw@127.0.0.1:7055 \
+  --name indexer-node --hosts 10.128.15.221,localhost --out /out
+```
+
+Omit `--hosts` for pure client certificates. See `issue-biz-cert --help`.

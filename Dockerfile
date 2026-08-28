@@ -131,6 +131,7 @@ COPY --from=builder \
     /app/
 
 COPY ./fabric-ca-client-config.yaml.tpl /app/
+COPY --chmod=755 ./scripts/issue-biz-cert.sh /app/issue-biz-cert
 
 RUN mkdir -p /app/.fxconfig
 COPY ./fxconfig-defaults.yaml /app/.fxconfig/config.yaml
