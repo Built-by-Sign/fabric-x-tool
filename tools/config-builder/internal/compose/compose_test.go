@@ -244,7 +244,7 @@ func TestBuildComposeExternalDatabaseAddsNoLocalDBDependency(t *testing.T) {
 		if _, exists := compose.Services[serviceName]; !exists {
 			t.Fatalf("expected service %q to exist", serviceName)
 		}
-		if len(compose.Services[serviceName].DependsOn) != 0 {
+		if _, dependsOnDB := compose.Services[serviceName].DependsOn["db"]; dependsOnDB {
 			t.Fatalf("external database should not create local db dependency for %s: %#v", serviceName, compose.Services[serviceName].DependsOn)
 		}
 	}
@@ -384,4 +384,58 @@ func containsVolumeSuffix(values []string, suffix string) bool {
 		}
 	}
 	return false
+}
+
+func TestBuildComposeInitializesValidatorDatabaseBeforeStart(t *testing.T) {
+	g := NewGenerator(&config.NetworkConfig{
+		Docker: config.DockerConfig{
+			Name:           "fx-network",
+			Network:        "fx-net",
+			NetworkDriver:  "bridge",
+			CommitterImage: "hyperledger/fabric-x-committer:1.0.7",
+			PostgresImage:  "postgres:16",
+		},
+		OrdererOrgs: []config.OrdererOrg{{
+			Name:     "Orderer",
+			Domain:   "example.com",
+			Orderers: []config.Node{{Name: "orderer0", Type: "router", Port: 7050}},
+		}},
+		PeerOrgs: []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}},
+		Committer: &config.CommitterConfig{
+			UsePostgres: true,
+			Components: []config.CommitterNode{
+				{Name: "db", Type: "db", Port: 15432, PostgresUser: "postgres", PostgresPassword: "secret", PostgresDB: "fxdb"},
+				{Name: "validator", Type: "validator", Port: 5100},
+			},
+		},
+	}, t.TempDir(), false)
+
+	compose, err := g.buildCompose(t.TempDir())
+	if err != nil {
+		t.Fatalf("buildCompose returned error: %v", err)
+	}
+
+	validator := compose.Services["validator"]
+	initDB, ok := compose.Services["validator-init-db"]
+	if !ok {
+		t.Fatalf("compose missing validator-init-db service: %v", compose.Services)
+	}
+	startArgs := validator.Command.([]string)
+	wantInit := []string{"init-db", "--config", startArgs[len(startArgs)-1]}
+	if got, _ := initDB.Command.([]string); strings.Join(got, " ") != strings.Join(wantInit, " ") {
+		t.Fatalf("init-db command = %#v, want %#v", initDB.Command, wantInit)
+	}
+	if initDB.Image != validator.Image || strings.Join(initDB.Volumes, ",") != strings.Join(validator.Volumes, ",") ||
+		strings.Join(initDB.Environment, ",") != strings.Join(validator.Environment, ",") {
+		t.Fatalf("init-db must reuse the validator image, config and env: init=%#v validator=%#v", initDB, validator)
+	}
+	if len(initDB.Ports) != 0 {
+		t.Fatalf("init-db must not publish ports, got %#v", initDB.Ports)
+	}
+	if dep := initDB.DependsOn["db"]; dep.Condition != "service_healthy" {
+		t.Fatalf("init-db should wait for a healthy db, got %#v", initDB.DependsOn)
+	}
+	if dep := validator.DependsOn["validator-init-db"]; dep.Condition != "service_completed_successfully" {
+		t.Fatalf("validator should wait for init-db to succeed, got %#v", validator.DependsOn)
+	}
 }

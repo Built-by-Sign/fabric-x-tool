@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `fxconfig` is built from `Built-by-Sign/fabric-x` `feat/pkcs11-support-v0.2.12` (the PKCS#11 commits on upstream main: fabric-x-common v0.2.12, committer v1.0.7), so `tx submit --wait` subscribes to `committerpb.SidecarService`; the builder image moves to Go 1.27.
+
 ### Added
 
+- `config-builder` compose adds a one-shot `<validator>-init-db` service (`committer init-db`) that the validator waits for; fabric-x-committer v1.0.5+ no longer creates the state database's system tables on start.
 - `config-builder` genesis template emits `SnapshotEndorsement` and `CheckpointEndorsement` application policies, mirroring `LifecycleEndorsement`; fabric-x-committer v1.0.5+ stops processing without them.
 
 ### Fixed

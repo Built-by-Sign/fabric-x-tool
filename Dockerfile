@@ -4,7 +4,7 @@
 # Pin the builder to the host architecture ($BUILDPLATFORM) and cross-compile
 # for $TARGETARCH. This avoids QEMU/Rosetta emulation for the non-native
 # architecture when doing multi-platform builds.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27 AS builder
 ARG BUILDARCH
 ARG TARGETARCH
 ARG TARGETOS=linux
@@ -80,10 +80,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # ---------- fxconfig (CGO, pulls in fabric-lib-go/bccsp/pkcs11) ----------
 # Kept above the config-builder COPY so edits to local source do not
 # invalidate this layer.
-ARG FABRIC_X_FORK_REF=feat/pkcs11-support
+ARG FABRIC_X_FORK_REF=feat/pkcs11-support-v0.2.12
 # SHA pinned for reproducibility. The branch name above is kept for human
 # readability; bump the SHA when the fork is rebased onto upstream.
-ARG FABRIC_X_FORK_SHA=1e5697ed7ef0547b2aa564cdd3baa0dcae4aef6d
+ARG FABRIC_X_FORK_SHA=71aa9d77028f55b95aaa7019be54528c10cc860c
 RUN git clone --branch ${FABRIC_X_FORK_REF} --single-branch \
     https://github.com/Built-by-Sign/fabric-x.git /build/fabric-x-src \
  && cd /build/fabric-x-src && git checkout ${FABRIC_X_FORK_SHA}
