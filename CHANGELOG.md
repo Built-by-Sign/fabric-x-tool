@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `config-builder` genesis template emits `SnapshotEndorsement` and `CheckpointEndorsement` application policies, mirroring `LifecycleEndorsement`; fabric-x-committer v1.0.5+ stops processing without them.
+
 ### Fixed
 
 - `config-builder` orderer PKCS11 BCCSP template now emits lowercase leaf keys (`library` / `pin` / `label` / `hash` / `security`) so Fabric-X orderer can parse generated configs without a downstream YAML tag patch.

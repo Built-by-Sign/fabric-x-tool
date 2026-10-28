@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"config-builder/internal/config"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestGenerateConfigtxFromTemplateUsesVendoredTemplate(t *testing.T) {
@@ -178,5 +180,57 @@ func TestOrdererEndpointsUseDefaultHost(t *testing.T) {
 	want := "id=1,broadcast," + getDefaultHost() + ":7050"
 	if endpoints[0] != want {
 		t.Fatalf("expected endpoint %q, got %q", want, endpoints[0])
+	}
+}
+
+func TestGenerateConfigtxSystemNamespacePoliciesFollowLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		peerOrgs []config.PeerOrg
+		wantType string
+		wantRule string
+	}{
+		{name: "peer orgs", peerOrgs: []config.PeerOrg{{Name: "Org1", Domain: "org1.example.com"}, {Name: "Org2", Domain: "org2.example.com"}}, wantType: "Signature", wantRule: "OR('Org1MSP.member', 'Org2MSP.member')"},
+		{name: "no peer orgs", wantType: "ImplicitMeta", wantRule: "ANY Admins"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.NetworkConfig{
+				ChannelID: "arma",
+				OrdererOrgs: []config.OrdererOrg{{
+					Name:     "Orderer",
+					Domain:   "example.com",
+					Orderers: []config.Node{{Name: "router0", Type: "router", Host: "router0.example.com", Port: 7050}},
+				}},
+				PeerOrgs: tc.peerOrgs,
+			}
+			configPath, err := NewGenerator(cfg, t.TempDir(), false).generateConfigtxFromTemplate()
+			if err != nil {
+				t.Fatalf("generateConfigtxFromTemplate: %v", err)
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read generated configtx: %v", err)
+			}
+			var parsed struct {
+				Application struct {
+					Policies map[string]struct {
+						Type string `yaml:"Type"`
+						Rule string `yaml:"Rule"`
+					} `yaml:"Policies"`
+				} `yaml:"Application"`
+			}
+			if err := yaml.Unmarshal(data, &parsed); err != nil {
+				t.Fatalf("parse generated configtx: %v", err)
+			}
+			for _, name := range []string{"LifecycleEndorsement", "SnapshotEndorsement", "CheckpointEndorsement"} {
+				policy, ok := parsed.Application.Policies[name]
+				if !ok {
+					t.Fatalf("Application.Policies missing %s", name)
+				}
+				if policy.Type != tc.wantType || policy.Rule != tc.wantRule {
+					t.Fatalf("%s = %s %q, want %s %q", name, policy.Type, policy.Rule, tc.wantType, tc.wantRule)
+				}
+			}
+		})
 	}
 }

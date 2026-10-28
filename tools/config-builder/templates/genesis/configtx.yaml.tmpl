@@ -80,6 +80,18 @@ Application: &ApplicationDefaults
       Rule: OR({{.LifecycleEndorsementRule}}){{else}}
       Type: ImplicitMeta
       Rule: ANY Admins{{end}}
+    # committer v1.0.5+ authorizes the _snapshot and _checkpoint system
+    # namespaces with these and stops when they are missing.
+    SnapshotEndorsement:{{if .HasPeerOrgs}}
+      Type: Signature
+      Rule: OR({{.LifecycleEndorsementRule}}){{else}}
+      Type: ImplicitMeta
+      Rule: ANY Admins{{end}}
+    CheckpointEndorsement:{{if .HasPeerOrgs}}
+      Type: Signature
+      Rule: OR({{.LifecycleEndorsementRule}}){{else}}
+      Type: ImplicitMeta
+      Rule: ANY Admins{{end}}
   Capabilities:
     <<: *ApplicationCapabilities
   ACLs:
