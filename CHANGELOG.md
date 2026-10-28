@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `config-builder` compose adds a one-shot `<validator>-init-db` service (`committer init-db`) that the validator waits for; fabric-x-committer v1.0.5+ no longer creates the state database's system tables on start.
 - `config-builder` genesis template emits `SnapshotEndorsement` and `CheckpointEndorsement` application policies, mirroring `LifecycleEndorsement`; fabric-x-committer v1.0.5+ stops processing without them.
 
 ### Fixed

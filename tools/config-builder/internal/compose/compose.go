@@ -6,6 +6,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -216,11 +217,40 @@ func (g *Generator) buildCompose(outputDir string) (*Compose, error) {
 			if err != nil {
 				return nil, err
 			}
+			if component.Type == "validator" {
+				initName := serviceName + "-init-db"
+				compose.Services[initName] = buildInitDBService(initName, service)
+				service.DependsOn[initName] = DependsOnCondition{Condition: "service_completed_successfully"}
+			}
 			compose.Services[serviceName] = service
 		}
 	}
 
 	return compose, nil
+}
+
+// buildInitDBService derives the one-shot "committer init-db" job that creates
+// the state database's system tables; committer v1.0.5+ no longer does this
+// when the validator starts.
+func buildInitDBService(name string, validator Service) Service {
+	args := validator.Command.([]string)
+	dependsOn := make(map[string]DependsOnCondition, len(validator.DependsOn))
+	for dep, cond := range validator.DependsOn {
+		dependsOn[dep] = cond
+	}
+	return Service{
+		Image:         validator.Image,
+		ContainerName: name,
+		Hostname:      name,
+		Command:       []string{"init-db", "--config", args[len(args)-1]},
+		Environment:   slices.Clone(validator.Environment),
+		Volumes:       slices.Clone(validator.Volumes),
+		Networks:      slices.Clone(validator.Networks),
+		DependsOn:     dependsOn,
+		User:          validator.User,
+		WorkingDir:    validator.WorkingDir,
+		ExtraHosts:    slices.Clone(validator.ExtraHosts),
+	}
 }
 
 // getCurrentUserUIDGID returns the current user's UID:GID string for container user setting
